@@ -1,0 +1,78 @@
+import axios from 'axios'
+
+const api = axios.create({
+    baseURL: '/api',
+    withCredentials: true,
+    headers: { 'Content-Type': 'application/json' },
+    timeout: 15000,
+})
+
+let isRefreshing = false
+let failedQueue = []
+
+const processQueue = (error) => {
+    failedQueue.forEach(prom => error ? prom.reject(error) : prom.resolve())
+    failedQueue = []
+}
+
+function logApiError(error, context = 'api-error') {
+    const requestId = error?.response?.data?.requestId
+    const status = error?.response?.status
+    const method = error?.config?.method?.toUpperCase()
+    const url = error?.config?.url
+    const message = error?.response?.data?.message || error?.message
+    console.error(`[API:${context}]`, { method, url, status, requestId, message })
+}
+
+// Response interceptor: handle 401 -> silent refresh -> retry once
+api.interceptors.response.use(
+    (response) => response,
+    async (error) => {
+        const originalRequest = error?.config
+        if (!originalRequest) {
+            logApiError(error, 'no-request-config')
+            return Promise.reject(error)
+        }
+
+        if (
+            error.response?.status === 401 &&
+            !originalRequest._retry &&
+            !originalRequest.url.includes('/auth/refresh') &&
+            !originalRequest.url.includes('/auth/login') &&
+            !originalRequest.url.includes('/auth/me')
+        ) {
+            if (isRefreshing) {
+                return new Promise((resolve, reject) => {
+                    failedQueue.push({ resolve, reject })
+                })
+                    .then(() => api(originalRequest))
+                    .catch(err => Promise.reject(err))
+            }
+
+            originalRequest._retry = true
+            isRefreshing = true
+
+            try {
+                await api.post('/auth/refresh')
+                processQueue(null)
+                return api(originalRequest)
+            } catch (refreshError) {
+                processQueue(refreshError)
+                logApiError(refreshError, 'refresh-failed')
+                const code = refreshError?.response?.data?.code
+                const eventName = code === 'TOKEN_EXPIRED' ? 'auth:session-expired' : 'auth:logout'
+                window.dispatchEvent(new CustomEvent(eventName, {
+                    detail: { message: refreshError?.response?.data?.message || 'Session expired.' }
+                }))
+                return Promise.reject(refreshError)
+            } finally {
+                isRefreshing = false
+            }
+        }
+
+        logApiError(error)
+        return Promise.reject(error)
+    }
+)
+
+export default api
