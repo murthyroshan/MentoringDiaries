@@ -4,6 +4,11 @@ import api from '../services/api'
 import { connectSocket, disconnectSocket } from '../services/socket'
 import { useNotificationStore } from './notificationStore'
 
+// Router navigate ref — registered by a component inside <BrowserRouter> so the
+// store can perform SPA navigation without triggering a full page reload.
+let _navigate = null
+export const setNavigate = (fn) => { _navigate = fn }
+
 export const useAuthStore = create(
     persist(
         (set, get) => ({
@@ -52,7 +57,11 @@ export const useAuthStore = create(
                 useNotificationStore.getState().clearNotifications()
                 set({ user: null, isAuthenticated: false, hasCheckedAuth: false })
                 if (window.location.pathname !== '/login') {
-                    window.location.href = '/login'
+                    if (_navigate) {
+                        _navigate('/login', { replace: true })
+                    } else {
+                        window.location.href = '/login'
+                    }
                 }
             },
         }),

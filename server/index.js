@@ -5,6 +5,16 @@ const connectDB = require('./src/config/db');
 const { initSocket } = require('./src/socket');
 const logger = require('./src/utils/logger');
 
+// Fail fast — weak or missing secrets make the entire auth system worthless.
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+    logger.error('JWT_SECRET must be set and at least 32 characters long. Exiting.');
+    process.exit(1);
+}
+if (!process.env.JWT_REFRESH_SECRET || process.env.JWT_REFRESH_SECRET.length < 32) {
+    logger.error('JWT_REFRESH_SECRET must be set and at least 32 characters long. Exiting.');
+    process.exit(1);
+}
+
 const server = http.createServer(app);
 
 initSocket(server);

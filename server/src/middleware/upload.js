@@ -4,9 +4,9 @@ const fs = require('fs');
 const crypto = require('crypto');
 
 const uploadDir = path.resolve(__dirname, '../../uploads');
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-}
+// Async, non-blocking — the directory will exist well before any upload request
+// arrives. Module loads at startup; HTTP requests come later.
+fs.promises.mkdir(uploadDir, { recursive: true }).catch(() => {});
 
 const ALLOWED_EXTENSIONS = new Set(['.pdf', '.docx', '.jpg', '.png']);
 const ALLOWED_MIME_TYPES = new Set([

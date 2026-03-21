@@ -1,4 +1,5 @@
 const OpenAI = require('openai');
+const logger = require('../utils/logger');
 
 const GROQ_BASE_URL = process.env.GROQ_BASE_URL || 'https://api.groq.com/openai/v1';
 const GROQ_MODEL = process.env.AI_MODEL || process.env.GROQ_MODEL || 'llama-3.1-8b-instant';
@@ -182,7 +183,7 @@ ${JSON.stringify({
             })}`
         );
     } catch (error) {
-        console.warn(`[AI] Groq analyze failed for student ${studentId}:`, error.message);
+        logger.warn({ event: 'ai_fallback', studentId: String(studentId), error: error.message }, '[AI] Groq analyze failed — using keyword fallback');
     }
 
     const sentiment = normalizeSentiment(modelResult?.sentiment || fallback.sentiment);
@@ -264,7 +265,7 @@ ${JSON.stringify({
             promptVersion: modelResult.promptVersion || PROMPT_VERSION,
         };
     } catch (error) {
-        console.warn('[AI] Mentor suggestion failed:', error.message);
+        logger.warn({ event: 'ai_fallback', context: 'mentor_suggestion', error: error.message }, '[AI] Mentor suggestion failed — using fallback');
         return fallback;
     }
 }
@@ -313,7 +314,7 @@ ${JSON.stringify(entries.map((e) => ({
             insightParagraph = String(modelResult.insightParagraph).trim();
         }
     } catch (error) {
-        console.warn('[AI] Weekly insight generation failed:', error.message);
+        logger.warn({ event: 'ai_fallback', context: 'weekly_insights', error: error.message }, '[AI] Weekly insight generation failed — using fallback');
     }
 
     return {

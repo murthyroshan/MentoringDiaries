@@ -1,9 +1,9 @@
 import { useEffect } from 'react'
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { AnimatePresence } from 'framer-motion'
 import { queryClient } from './services/queryClient'
-import { useAuthStore } from './store/authStore'
+import { useAuthStore, setNavigate } from './store/authStore'
 import { useUIStore } from './store/uiStore'
 
 // Layout
@@ -108,6 +108,14 @@ function AnimatedRoutes() {
   )
 }
 
+// Registers React Router's navigate function into the auth store so logout can
+// perform a SPA redirect instead of a hard page reload.
+function RouterNavigateSync() {
+  const navigate = useNavigate()
+  useEffect(() => { setNavigate(navigate) }, [navigate])
+  return null
+}
+
 export default function App() {
   const { silentRefresh, _hasHydrated } = useAuthStore()
   const { initTheme } = useUIStore()
@@ -129,6 +137,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
+        <RouterNavigateSync />
         <CustomCursor />
         <AnimatedRoutes />
         <ToastContainer />

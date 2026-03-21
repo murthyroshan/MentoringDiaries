@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const DiaryEntry = require('../models/DiaryEntry');
 const MentoringSession = require('../models/MentoringSession');
+const { notifyUserWithPersistence } = require('../socket');
 const { idsEqual, canAccessStudentData } = require('../utils/accessControl');
 const { getPagination } = require('../utils/pagination');
 const { buildSafeSearchRegex } = require('../utils/query');
@@ -172,6 +173,23 @@ exports.assignMentor = async (req, res, next) => {
         } finally {
             session.endSession();
         }
+
+        // Notify old mentor they are no longer responsible for this student.
+        if (student.assignedMentor && !student.assignedMentor.equals(mentorId)) {
+            notifyUserWithPersistence(student.assignedMentor, {
+                type: 'system:announcement',
+                title: 'Student Reassigned',
+                message: `${student.name} has been reassigned to another mentor.`,
+                metadata: { studentId: student._id },
+            });
+        }
+        // Notify new mentor they now have an additional student.
+        notifyUserWithPersistence(mentorId, {
+            type: 'system:announcement',
+            title: 'New Student Assigned',
+            message: `${student.name} has been assigned to you as a mentee.`,
+            metadata: { studentId: student._id },
+        });
 
         const updatedStudent = await User.findById(student._id).select('-password -refreshToken');
         res.json({ success: true, message: 'Mentor assigned successfully', data: { student: updatedStudent, mentor } });

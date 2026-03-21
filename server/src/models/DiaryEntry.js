@@ -159,7 +159,7 @@ const diaryEntrySchema = new mongoose.Schema(
         // ─── Status & Admin ───────────────────────────────────────
         status: {
             type: String,
-            enum: ['submitted', 'reviewed'],
+            enum: ['submitted', 'reviewed', 'archived'],
             default: 'submitted',
         },
         adminNotes: { type: String, default: '' },

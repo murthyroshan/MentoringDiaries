@@ -46,6 +46,7 @@ async function streamAnalyticsCSV(res, startDate, endDate) {
 
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="analytics.csv"');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.write(csvHeader(ANALYTICS_FIELDS));
 
     const cursor = DiaryEntry.find(query)
@@ -97,6 +98,7 @@ async function streamAnalyticsCSV(res, startDate, endDate) {
 async function streamFlaggedEntriesCSV(res) {
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="flagged-entries.csv"');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.write(csvHeader(FLAGGED_FIELDS));
 
     const cursor = DiaryEntry.find({ 'aiAnalysis.flagged': true })

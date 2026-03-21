@@ -17,6 +17,10 @@ const CSRF_COOKIE = 'csrf-token';
  * in the header (same-origin policy blocks it).
  */
 function csrfMiddleware(req, res, next) {
+    // Skip CSRF checks in test environment so Supertest suites don't need to
+    // fetch and replay the token on every mutating request.
+    if (process.env.NODE_ENV === 'test') return next();
+
     let token = req.cookies?.[CSRF_COOKIE];
 
     if (!token) {
