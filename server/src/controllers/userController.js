@@ -1,5 +1,7 @@
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const DiaryEntry = require('../models/DiaryEntry');
+const MentoringSession = require('../models/MentoringSession');
 const { idsEqual, canAccessStudentData } = require('../utils/accessControl');
 const { getPagination } = require('../utils/pagination');
 const { buildSafeSearchRegex } = require('../utils/query');
@@ -104,7 +106,13 @@ exports.updateUser = async (req, res, next) => {
         if (rollNumber !== undefined) updateData.rollNumber = rollNumber;
         if (req.user.role === 'admin') {
             if (isActive !== undefined) updateData.isActive = isActive;
-            if (role) updateData.role = role;
+            if (role !== undefined) {
+                const VALID_ROLES = ['student', 'mentor', 'admin'];
+                if (!VALID_ROLES.includes(role)) {
+                    return res.status(400).json({ success: false, message: 'Invalid role. Must be student, mentor, or admin.' });
+                }
+                updateData.role = role;
+            }
         }
 
         const user = await User.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true })
@@ -131,27 +139,42 @@ exports.assignMentor = async (req, res, next) => {
             return res.status(404).json({ success: false, message: 'Mentor not found' });
         }
 
-        // Remove from previous mentor's list
-        if (student.assignedMentor) {
-            await User.findByIdAndUpdate(student.assignedMentor, {
-                $pull: { assignedStudents: student._id },
-            });
+        // All three writes are atomic — a partial failure would orphan the student.
+        const session = await mongoose.startSession();
+        session.startTransaction();
+        try {
+            if (student.assignedMentor) {
+                await User.findByIdAndUpdate(
+                    student.assignedMentor,
+                    { $pull: { assignedStudents: student._id } },
+                    { session }
+                );
+            }
+            await User.findByIdAndUpdate(
+                student._id,
+                { assignedMentor: mentorId },
+                { session }
+            );
+            await User.findByIdAndUpdate(
+                mentorId,
+                { $addToSet: { assignedStudents: student._id } },
+                { session }
+            );
+            await DiaryEntry.updateMany(
+                { student: student._id, status: 'submitted' },
+                { mentor: mentorId },
+                { session }
+            );
+            await session.commitTransaction();
+        } catch (txErr) {
+            await session.abortTransaction();
+            throw txErr;
+        } finally {
+            session.endSession();
         }
 
-        student.assignedMentor = mentorId;
-        await student.save({ validateBeforeSave: false });
-
-        await User.findByIdAndUpdate(mentorId, {
-            $addToSet: { assignedStudents: student._id },
-        });
-
-        // Update all pending entries for this student
-        await DiaryEntry.updateMany(
-            { student: student._id, status: 'submitted' },
-            { mentor: mentorId }
-        );
-
-        res.json({ success: true, message: 'Mentor assigned successfully', data: { student, mentor } });
+        const updatedStudent = await User.findById(student._id).select('-password -refreshToken');
+        res.json({ success: true, message: 'Mentor assigned successfully', data: { student: updatedStudent, mentor } });
     } catch (error) {
         next(error);
     }
@@ -162,6 +185,27 @@ exports.deleteUser = async (req, res, next) => {
     try {
         const user = await User.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
         if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+        // Clean up relational data so deactivation doesn't leave orphaned records.
+        if (user.role === 'student') {
+            // Archive the student's diary entries.
+            await DiaryEntry.updateMany({ student: user._id }, { $set: { status: 'archived' } });
+            // Detach from their mentor's student list.
+            if (user.assignedMentor) {
+                await User.findByIdAndUpdate(user.assignedMentor, {
+                    $pull: { assignedStudents: user._id },
+                });
+            }
+        } else if (user.role === 'mentor') {
+            // Unassign all students that were linked to this mentor.
+            await User.updateMany(
+                { assignedMentor: user._id },
+                { $unset: { assignedMentor: '' } }
+            );
+            // Archive diary entries where this user was the reviewing mentor.
+            await DiaryEntry.updateMany({ mentor: user._id }, { $set: { mentor: null } });
+        }
+
         res.json({ success: true, message: 'User deactivated successfully' });
     } catch (error) {
         next(error);

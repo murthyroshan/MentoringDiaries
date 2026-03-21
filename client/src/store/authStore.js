@@ -20,17 +20,16 @@ export const useAuthStore = create(
             silentRefresh: async () => {
                 // If persist hasn't finished loading from localStorage yet, skip.
                 // App.jsx waits for _hasHydrated before calling this.
-                const { user, isAuthenticated, hasCheckedAuth } = get()
-                
-                if (hasCheckedAuth) return user;
-                
-                if (isAuthenticated && user) {
-                    // Already authenticated — just reconnect the socket
-                    connectSocket(user._id, user.role)
-                    set({ hasCheckedAuth: true })
-                    return user
-                }
-                // Not authenticated — verify with server
+                const { hasCheckedAuth } = get()
+                if (hasCheckedAuth) return get().user;
+
+                // Reconnect the socket immediately using cached minimal data so the UI
+                // feels instant on hard refresh, then overwrite with fresh server data.
+                const cached = get().user
+                if (cached?._id) connectSocket(cached._id, cached.role)
+
+                // Always call /auth/me — gets the full user object (with populated
+                // assignedMentor etc.) and confirms the token is still valid.
                 try {
                     const { data } = await api.get('/auth/me')
                     set({ user: data.user, isAuthenticated: true, hasCheckedAuth: true })
@@ -59,7 +58,14 @@ export const useAuthStore = create(
         }),
         {
             name: 'auth-storage',
-            partialize: (state) => ({ user: state.user, isAuthenticated: state.isAuthenticated }),
+            // Only persist the minimal fields needed to reconnect the socket on
+            // hard refresh. Full user data is always fetched fresh from /auth/me.
+            partialize: (state) => ({
+                user: state.user
+                    ? { _id: state.user._id, name: state.user.name, role: state.user.role }
+                    : null,
+                isAuthenticated: state.isAuthenticated,
+            }),
             onRehydrateStorage: () => (state) => {
                 // Called once persisted state has been loaded from localStorage.
                 // Flip the flag so App.jsx knows it's safe to call silentRefresh.
@@ -75,15 +81,18 @@ if (typeof window !== 'undefined') {
         useAuthStore.getState().logout()
     })
 
-    // Session expired — show toast then logout
+    // Session expired — show toast then logout.
+    // The axios interceptor already attempted a token refresh before firing this event,
+    // so both tokens are expired. Give the user 8 seconds to see the message and save
+    // any in-progress work before the redirect happens.
     window.addEventListener('auth:session-expired', (e) => {
-        // Lazy import to avoid circular dep
         import('./uiStore').then(({ useUIStore }) => {
             useUIStore.getState().addToast(
-                e.detail?.message || 'Your session has expired. Please log in again.',
-                'error'
+                e.detail?.message || 'Your session has expired. You will be logged out in a few seconds.',
+                'error',
+                8000
             )
         })
-        setTimeout(() => useAuthStore.getState().logout(), 1500) // let toast show before redirect
+        setTimeout(() => useAuthStore.getState().logout(), 8000)
     })
 }

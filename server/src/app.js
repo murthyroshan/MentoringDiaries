@@ -23,6 +23,9 @@ const requestId = require('./middleware/requestId');
 const requestLogger = require('./middleware/requestLogger');
 const responseEnvelope = require('./middleware/responseEnvelope');
 const queryGuard = require('./middleware/queryGuard');
+const csrf = require('./middleware/csrf');
+const auth = require('./middleware/auth');
+const DiaryEntry = require('./models/DiaryEntry');
 
 const app = express();
 
@@ -60,7 +63,7 @@ app.use(cors({
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID', 'X-CSRF-Token'],
 }));
 
 const globalLimiter = rateLimit({
@@ -85,11 +88,37 @@ app.use(queryGuard);
 
 app.use(requestLogger);
 
+// CSRF protection: sets csrf-token cookie on first request; validates
+// X-CSRF-Token header on all mutating API requests.
+app.use('/api', csrf);
+
 app.get('/api/health', (req, res) => {
     res.json({ success: true, message: 'Mentoring Diaries API is running', timestamp: new Date() });
 });
 
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+// Protected file endpoint — auth required; user must own the entry or be admin/mentor.
+app.get('/uploads/:filename', auth, async (req, res, next) => {
+    try {
+        const { filename } = req.params;
+        // Block path-traversal attempts before any filesystem access.
+        if (/[/\\]|\.\./.test(filename)) return res.status(400).end();
+
+        const entry = await DiaryEntry.findOne({ attachmentUrl: `/uploads/${filename}` })
+            .select('student mentor');
+        if (!entry) return res.status(404).end();
+
+        const uid = req.user._id;
+        const canAccess =
+            entry.student?.equals(uid) ||
+            entry.mentor?.equals(uid) ||
+            req.user.role === 'admin';
+        if (!canAccess) return res.status(403).end();
+
+        res.sendFile(path.join(__dirname, '../uploads', filename));
+    } catch (err) {
+        next(err);
+    }
+});
 
 app.use('/api/auth', authRoutes);
 app.use('/api/diary', diaryRoutes);

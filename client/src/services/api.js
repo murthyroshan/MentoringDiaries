@@ -7,6 +7,21 @@ const api = axios.create({
     timeout: 15000,
 })
 
+// Read the non-httpOnly CSRF cookie set by the server and attach it as a
+// header on every mutating request so the server can verify it.
+function getCsrfToken() {
+    const match = document.cookie.match(/(?:^|;\s*)csrf-token=([^;]+)/)
+    return match ? decodeURIComponent(match[1]) : ''
+}
+
+api.interceptors.request.use((config) => {
+    const method = (config.method || '').toUpperCase()
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+        config.headers['X-CSRF-Token'] = getCsrfToken()
+    }
+    return config
+})
+
 let isRefreshing = false
 let failedQueue = []
 

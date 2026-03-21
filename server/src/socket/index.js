@@ -1,7 +1,23 @@
 const Notification = require('../models/Notification');
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
 
 let io;
 const userSocketMap = {}; // userId -> socketId
+
+// Parse raw cookie header string into a key/value map.
+function parseCookies(cookieHeader) {
+    const cookies = {};
+    if (!cookieHeader) return cookies;
+    cookieHeader.split(';').forEach((pair) => {
+        const idx = pair.indexOf('=');
+        if (idx < 0) return;
+        const key = pair.slice(0, idx).trim();
+        const val = pair.slice(idx + 1).trim();
+        try { cookies[key] = decodeURIComponent(val); } catch { cookies[key] = val; }
+    });
+    return cookies;
+}
 
 function initSocket(server) {
     const { Server } = require('socket.io');
@@ -13,11 +29,38 @@ function initSocket(server) {
         },
     });
 
+    // Authenticate every socket connection using the same httpOnly cookie
+    // that the REST API uses — no separate token handshake needed from the client.
+    io.use(async (socket, next) => {
+        try {
+            const cookies = parseCookies(socket.handshake.headers.cookie || '');
+            const token = cookies.accessToken;
+            if (!token) return next(new Error('Unauthorized: no access token'));
+
+            let decoded;
+            try {
+                decoded = jwt.verify(token, process.env.JWT_SECRET);
+            } catch {
+                return next(new Error('Unauthorized: invalid token'));
+            }
+
+            const user = await User.findById(decoded.id).select('_id role isActive');
+            if (!user || !user.isActive) return next(new Error('Unauthorized: user not found'));
+
+            socket.userId = user._id.toString();
+            socket.userRole = user.role;
+            next();
+        } catch {
+            next(new Error('Unauthorized'));
+        }
+    });
+
     io.on('connection', (socket) => {
-        console.log(`Socket connected: ${socket.id}`);
+        console.log(`Socket connected: ${socket.id} (user: ${socket.userId})`);
 
         socket.on('join', (userId) => {
-            if (userId) {
+            // Only allow users to join their own room — prevents impersonation.
+            if (userId && userId === socket.userId) {
                 socket.join(userId);
                 userSocketMap[userId] = socket.id;
                 console.log(`User ${userId} joined room`);
@@ -25,8 +68,10 @@ function initSocket(server) {
         });
 
         socket.on('join-admin', () => {
+            // Only admins may join the admin broadcast room.
+            if (socket.userRole !== 'admin') return;
             socket.join('admins');
-            console.log(`Admin ${socket.id} joined admin room`);
+            console.log(`Admin ${socket.userId} joined admin room`);
         });
 
         socket.on('disconnect', () => {

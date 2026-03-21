@@ -1,5 +1,15 @@
 const DiaryEntry = require('../models/DiaryEntry');
 const User = require('../models/User');
+
+// Returns the current academic year string, e.g. "2025-26".
+// Months June (5) onward belong to the new academic year.
+function currentAcademicYear() {
+    const now = new Date();
+    const y = now.getFullYear();
+    return now.getMonth() >= 5
+        ? `${y}-${String(y + 1).slice(2)}`
+        : `${y - 1}-${String(y).slice(2)}`;
+}
 const { analyzeEntry, generateMentorSuggestion } = require('../services/aiService');
 const { notifyMentor, notifyStudent, notifyAdmins } = require('../socket');
 const { getAssignedStudentIds, canAccessStudentData, idsEqual } = require('../utils/accessControl');
@@ -90,9 +100,19 @@ exports.createEntry = async (req, res, next) => {
 
         // ── Compute avgSubjectRating for AI ───────────────────────
         let avgSubjectRating = null;
-        const parsedRatings = Array.isArray(subjectRatings)
-            ? subjectRatings
-            : (subjectRatings ? (() => { try { return JSON.parse(subjectRatings); } catch { return []; } })() : []);
+        let parsedRatings = [];
+        if (Array.isArray(subjectRatings)) {
+            parsedRatings = subjectRatings;
+        } else if (subjectRatings) {
+            try {
+                parsedRatings = JSON.parse(subjectRatings);
+                if (!Array.isArray(parsedRatings)) {
+                    return res.status(400).json({ success: false, message: 'subjectRatings must be an array.' });
+                }
+            } catch {
+                return res.status(400).json({ success: false, message: 'Invalid subjectRatings format.' });
+            }
+        }
 
         if (parsedRatings.length > 0) {
             const sum = parsedRatings.reduce((acc, s) => acc + (Number(s.rating) || 3), 0);
@@ -147,7 +167,7 @@ exports.createEntry = async (req, res, next) => {
             startDate: startDate ? new Date(startDate) : undefined,
             endDate: endDate ? new Date(endDate) : undefined,
             week: week ? Number(week) : undefined,
-            academicYear: academicYear || '2024-25',
+            academicYear: academicYear || currentAcademicYear(),
             semester: semester ? Number(semester) : undefined,
             // Section A
             content,
@@ -232,6 +252,9 @@ exports.getEntries = async (req, res, next) => {
         } else if (req.user.role === 'admin') {
             if (studentId) query.student = studentId;
             if (mentorId) query.mentor = mentorId;
+        } else {
+            // Unknown role — deny access rather than leaking all entries.
+            return res.status(403).json({ success: false, message: 'Access denied.' });
         }
 
         // Filters
@@ -303,6 +326,9 @@ exports.getEntry = async (req, res, next) => {
             if (!allowed) {
                 return res.status(403).json({ success: false, message: 'Access denied.' });
             }
+        } else if (req.user.role !== 'admin') {
+            // Unknown role — deny rather than expose.
+            return res.status(403).json({ success: false, message: 'Access denied.' });
         }
 
         res.json({ success: true, data: entry });

@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const rateLimit = require('express-rate-limit');
 const {
     createEntry, getEntries, getEntry,
     addMentorResponse, getFlaggedEntries, getStudentRiskHistory,
@@ -12,10 +13,20 @@ const requireRole = require('../middleware/roleCheck');
 const { createEntryValidation, mentorResponseValidation } = require('../middleware/validate');
 const { upload } = require('../middleware/upload');
 
+// 10 diary submissions per user per hour — protects Groq API quota and DB storage.
+const diaryCreateLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 10,
+    keyGenerator: (req) => req.user?._id?.toString() || req.ip,
+    message: { success: false, message: 'Too many diary submissions. Please wait before submitting again.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
 router.use(auth);
 
 // POST - create entry (optional file attachment)
-router.post('/', requireRole('student'), upload.single('attachment'), createEntryValidation, createEntry);
+router.post('/', requireRole('student'), diaryCreateLimiter, upload.single('attachment'), createEntryValidation, createEntry);
 
 // IMPORTANT: specific paths MUST come before /:id wildcard
 router.get('/check-range', requireRole('student'), checkRange);

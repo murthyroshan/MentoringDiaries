@@ -6,6 +6,10 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 const AI_TIMEOUT_MS = Number(process.env.AI_TIMEOUT_MS || 5000);
 const PROMPT_VERSION = 'v1';
 
+if (!GROQ_API_KEY) {
+    console.warn('[AI] GROQ_API_KEY is not set — AI analysis disabled, using keyword-based fallback only.');
+}
+
 const client = GROQ_API_KEY ? new OpenAI({
     apiKey: GROQ_API_KEY,
     baseURL: GROQ_BASE_URL,
