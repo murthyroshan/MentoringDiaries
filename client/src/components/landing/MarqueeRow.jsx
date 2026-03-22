@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
+import { useReducedMotion } from 'framer-motion'
 
 const C = {
   surface: '#111118',
@@ -31,7 +32,7 @@ const MENTOR_QUOTES = [
   { name:'Ms. Yuki S.',   role:'Wellbeing Mentor',     quote:"I can finally track emotional patterns over a full semester. This is the wellbeing tool universities needed.", stars:5, init:'YS', color:'#3DD68C' },
 ]
 
-function QuoteCard({ item, onHover, paused }) {
+function QuoteCard({ item, onHover }) {
   const [hovered, setHovered] = useState(false)
 
   return (
@@ -82,24 +83,25 @@ function QuoteCard({ item, onHover, paused }) {
 }
 
 function MarqueeTrack({ items, direction = 'left', speed = 40 }) {
+  const prefersReduced = useReducedMotion()
   const [paused, setPaused] = useState(false)
-  const doubled = [...items, ...items]  // duplicate for seamless loop
+  const doubled  = [...items, ...items]  // duplicate for seamless loop
   const duration = items.length * speed
 
   return (
     <div style={{ overflow:'hidden', width:'100%' }}>
       <div
         style={{
-          display:         'flex',
-          gap:             '16px',
-          width:           'max-content',
-          animation:       `marquee-${direction} ${duration}s linear infinite`,
+          display:            'flex',
+          gap:                '16px',
+          width:              'max-content',
+          animation:          prefersReduced ? 'none' : `marquee-${direction} ${duration}s linear infinite`,
           animationPlayState: paused ? 'paused' : 'running',
-          willChange:      'transform',
+          willChange:         prefersReduced ? 'auto' : 'transform',
         }}
       >
         {doubled.map((item, i) => (
-          <QuoteCard key={i} item={item} onHover={setPaused} paused={paused} />
+          <QuoteCard key={i} item={item} onHover={setPaused} />
         ))}
       </div>
     </div>

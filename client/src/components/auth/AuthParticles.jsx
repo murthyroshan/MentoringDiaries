@@ -1,28 +1,37 @@
+/**
+ * Auth-tuned particle field — lighter than Landing's version.
+ * Lazy-loaded by AuthBackground.jsx.
+ * Identical architecture to ParticleField.jsx but:
+ *   COUNT        = 1500   (vs 3000)
+ *   repel radius = 4 units, strength = 0.8
+ *   camera speed = 0.03x (subtler parallax)
+ *   pixelRatio   = Math.min(devicePixelRatio, 2)
+ */
 import { useRef, useState, useMemo, useEffect } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 
 const GOLD  = new THREE.Color('#E8B84B')
 const EMBER = new THREE.Color('#D4622A')
-const COUNT = 3000
+const COUNT = 1500
+const RAD2  = 16  // 4² — repulsion radius squared
 
-// Factory runs once outside React — no purity concerns
 function createParticleData() {
-  const pos      = new Float32Array(COUNT * 3)
-  const col      = new Float32Array(COUNT * 3)
-  const ph       = new Float32Array(COUNT * 2)
-  const tmpColor = new THREE.Color()
+  const pos  = new Float32Array(COUNT * 3)
+  const col  = new Float32Array(COUNT * 3)
+  const ph   = new Float32Array(COUNT * 2)
+  const tmp  = new THREE.Color()
 
   for (let i = 0; i < COUNT; i++) {
-    pos[i * 3]     = (Math.random() - 0.5) * 40
-    pos[i * 3 + 1] = (Math.random() - 0.5) * 24
-    pos[i * 3 + 2] = (Math.random() - 0.5) * 16
+    pos[i * 3]     = (Math.random() - 0.5) * 38
+    pos[i * 3 + 1] = (Math.random() - 0.5) * 22
+    pos[i * 3 + 2] = (Math.random() - 0.5) * 14
 
     const t = Math.random()
-    tmpColor.lerpColors(GOLD, EMBER, t)
-    col[i * 3]     = tmpColor.r
-    col[i * 3 + 1] = tmpColor.g
-    col[i * 3 + 2] = tmpColor.b
+    tmp.lerpColors(GOLD, EMBER, t)
+    col[i * 3]     = tmp.r
+    col[i * 3 + 1] = tmp.g
+    col[i * 3 + 2] = tmp.b
 
     ph[i * 2]     = Math.random() * Math.PI * 2
     ph[i * 2 + 1] = Math.random() * Math.PI * 2
@@ -32,8 +41,6 @@ function createParticleData() {
 
 function Particles({ mouseRef }) {
   const mesh = useRef()
-
-  // useState lazy initializer: runs once per mount, no ref access during render
   const [{ positions, colors, phases }] = useState(createParticleData)
 
   const geo = useMemo(() => {
@@ -43,7 +50,7 @@ function Particles({ mouseRef }) {
     return g
   }, [positions, colors])
 
-  const basePositions = useMemo(() => positions.slice(), [positions])
+  const basePos = useMemo(() => positions.slice(), [positions])
 
   useEffect(() => () => geo.dispose(), [geo])
 
@@ -55,26 +62,26 @@ function Particles({ mouseRef }) {
     const my  = mouseRef.current.y
 
     for (let i = 0; i < COUNT; i++) {
-      const bx = basePositions[i * 3]
-      const by = basePositions[i * 3 + 1]
-      const bz = basePositions[i * 3 + 2]
+      const bx = basePos[i * 3]
+      const by = basePos[i * 3 + 1]
+      const bz = basePos[i * 3 + 2]
 
-      const dx = bx + Math.sin(t * 0.3 + phases[i * 2])     * 0.4
-      const dy = by + Math.cos(t * 0.2 + phases[i * 2 + 1]) * 0.4
+      // Gentle breathe: slow drift + sine oscillation
+      let fx = bx + Math.sin(t * 0.25 + phases[i * 2])     * 0.5
+      let fy = by + Math.cos(t * 0.18 + phases[i * 2 + 1]) * 0.5
 
-      const wx  = mx * 20
-      const wy  = my * 12
-      const rdx = dx - wx
-      const rdy = dy - wy
+      // Mouse repulsion
+      const wx  = mx * 18
+      const wy  = my * 10
+      const rdx = fx - wx
+      const rdy = fy - wy
       const rd2 = rdx * rdx + rdy * rdy
-      const RAD2 = 9
-      let fx = dx, fy = dy
 
       if (rd2 < RAD2 && rd2 > 0.001) {
-        const force = (RAD2 - rd2) / RAD2
         const dist  = Math.sqrt(rd2)
-        fx += (rdx / dist) * force * 1.5
-        fy += (rdy / dist) * force * 1.5
+        const force = ((RAD2 - rd2) / RAD2) * 0.8
+        fx += (rdx / dist) * force
+        fy += (rdy / dist) * force
       }
 
       pos[i * 3]     = fx
@@ -83,17 +90,18 @@ function Particles({ mouseRef }) {
     }
     mesh.current.geometry.attributes.position.needsUpdate = true
 
-    state.camera.position.x += (mx * 1.5 - state.camera.position.x) * 0.05
-    state.camera.position.y += (my * 1.0 - state.camera.position.y) * 0.05
+    // Subtle camera parallax (0.03x)
+    state.camera.position.x += (mx * 0.6 - state.camera.position.x) * 0.03
+    state.camera.position.y += (my * 0.4 - state.camera.position.y) * 0.03
   })
 
   return (
     <points ref={mesh} geometry={geo}>
       <pointsMaterial
-        size={0.06}
+        size={0.055}
         vertexColors
         transparent
-        opacity={0.55}
+        opacity={0.45}
         sizeAttenuation
         depthWrite={false}
       />
@@ -101,7 +109,7 @@ function Particles({ mouseRef }) {
   )
 }
 
-export default function ParticleField({ className = '', style = {} }) {
+export default function AuthParticles() {
   const mouseRef = useRef({ x: 0, y: 0 })
 
   useEffect(() => {
@@ -115,11 +123,10 @@ export default function ParticleField({ className = '', style = {} }) {
 
   return (
     <Canvas
-      className={className}
-      dpr={[1, 2]}
+      dpr={[1, Math.min(window.devicePixelRatio, 2)]}
       camera={{ position: [0, 0, 10], fov: 75 }}
       gl={{ antialias: false, alpha: true }}
-      style={{ background: 'transparent', ...style }}
+      style={{ position: 'absolute', inset: 0, background: 'transparent' }}
     >
       <Particles mouseRef={mouseRef} />
     </Canvas>

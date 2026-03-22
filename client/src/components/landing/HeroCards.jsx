@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
+// eslint-disable-next-line no-unused-vars -- <motion.div> not tracked without eslint-plugin-react
 import { motion, useMotionValue, useSpring, useTransform } from 'framer-motion'
 
 const C = {
@@ -57,6 +58,7 @@ function DiaryCard() {
         rotateY: sRotY,
         transformPerspective: 1000,
         transformStyle: 'preserve-3d',
+        WebkitTransformStyle: 'preserve-3d',
         background:   C.surface,
         border:       `1px solid ${hovered ? C.borderLit : C.border}`,
         borderRadius: '24px',

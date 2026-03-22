@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback } from 'react'
+// eslint-disable-next-line no-unused-vars -- <motion.div> not tracked without eslint-plugin-react
 import { motion } from 'framer-motion'
 
 const C = {

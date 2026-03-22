@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
+// eslint-disable-next-line no-unused-vars -- <motion.div> not tracked without eslint-plugin-react
 import { motion, useMotionValue, useSpring } from 'framer-motion';
 import { useReducedMotion } from 'framer-motion';
 

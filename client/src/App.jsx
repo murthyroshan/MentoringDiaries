@@ -11,8 +11,8 @@ import DashboardLayout from './components/layout/DashboardLayout'
 
 // Public Pages
 import LandingPage from './pages/public/Landing'
-import LoginPage from './pages/LoginPage'
-import RegisterPage from './pages/RegisterPage'
+import LoginPage from './pages/public/Login'
+import RegisterPage from './pages/public/Register'
 
 // Student Pages
 import StudentDashboard from './pages/student/StudentDashboard'

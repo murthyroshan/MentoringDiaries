@@ -1,20 +1,20 @@
 import {
   useEffect, useRef, useState, useCallback, lazy, Suspense,
 } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import {
-  motion, useReducedMotion, useScroll, useTransform,
+  motion, useReducedMotion, useScroll,
   useMotionValue, useSpring, AnimatePresence,
 } from 'framer-motion'
-
-// Stable motion-wrapped Link — must be outside any component
-const MotionLink = motion(Link)
 import Lenis from 'lenis'
-import HeroCards   from '../../components/landing/HeroCards'
+import HeroCards      from '../../components/landing/HeroCards'
 import MarqueeSection from '../../components/landing/MarqueeRow'
-import BentoGrid   from '../../components/landing/BentoGrid'
+import BentoGrid      from '../../components/landing/BentoGrid'
 
 const ParticleField = lazy(() => import('../../components/landing/ParticleField'))
+
+// Stable motion-wrapped Link — defined after imports, outside any component
+const MotionLink = motion(Link)
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const C = {
@@ -66,12 +66,13 @@ function useSmoothScroll(skip) {
 
 // ── CountUp ───────────────────────────────────────────────────────────────────
 function useCountUp(target, duration = 1500, skip = false) {
-  const [count, setCount] = useState(skip ? target : 0)
+  // Lazy initializer sets correct value without needing setState in effect
+  const [count, setCount] = useState(() => skip ? target : 0)
   const ref   = useRef(null)
   const ran   = useRef(false)
 
   useEffect(() => {
-    if (skip) { setCount(target); return }
+    if (skip) return   // initial value already correct from lazy initializer
     const el = ref.current
     if (!el) return
     const io = new IntersectionObserver(([e]) => {
@@ -142,11 +143,12 @@ function MagneticButton({ children, strength = 6, style = {}, onClick, to, class
 }
 
 // ── Typewriter ────────────────────────────────────────────────────────────────
-function Typewriter({ text, startDelay = 1200, speed = 35 }) {
-  const [displayed, setDisplayed] = useState('')
-  const [done,      setDone]      = useState(false)
+function Typewriter({ text, startDelay = 1200, speed = 35, skip = false }) {
+  const [displayed, setDisplayed] = useState(skip ? text : '')
+  const [done,      setDone]      = useState(skip)
 
   useEffect(() => {
+    if (skip) { setDisplayed(text); setDone(true); return }
     let i   = 0
     const tid = setTimeout(() => {
       const iv = setInterval(() => {
@@ -157,7 +159,7 @@ function Typewriter({ text, startDelay = 1200, speed = 35 }) {
       return () => clearInterval(iv)
     }, startDelay)
     return () => clearTimeout(tid)
-  }, [text, startDelay, speed])
+  }, [text, startDelay, speed, skip])
 
   return (
     <p style={{
@@ -264,7 +266,7 @@ function FlipCard({ step, skip }) {
       <motion.div
         animate={{ rotateY: flipped ? 180 : 0 }}
         transition={{ duration:0.6, ease:[0.4, 0, 0.2, 1] }}
-        style={{ width:'100%', height:'100%', position:'relative', transformStyle:'preserve-3d' }}
+        style={{ width:'100%', height:'100%', position:'relative', transformStyle:'preserve-3d', WebkitTransformStyle:'preserve-3d' }}
       >
         {/* Front */}
         <div style={{
@@ -350,12 +352,13 @@ function StatItem({ to, prefix = '', suffix = '', label, skip }) {
 
 // ── Final CTA countdown ───────────────────────────────────────────────────────
 function FinalCTAContent({ skip }) {
-  const [phase, setPhase] = useState(0)
+  // Lazy initializer: skip → jump straight to final state, no setState in effect
+  const [phase, setPhase] = useState(() => skip ? 4 : 0)
   const ref = useRef(null)
   const triggered = useRef(false)
 
   useEffect(() => {
-    if (skip) { setPhase(4); return }
+    if (skip) return   // initial value already 4 from lazy initializer
     const el = ref.current
     if (!el) return
     const io = new IntersectionObserver(([e]) => {
@@ -472,9 +475,8 @@ function FinalCTAContent({ skip }) {
 
 // ── Main Landing ──────────────────────────────────────────────────────────────
 export default function Landing() {
-  const skip    = useReducedMotion()
-  const navigate = useNavigate()
-  const lenisRef = useSmoothScroll(skip)
+  const skip = useReducedMotion()
+  useSmoothScroll(skip)
 
   // Scroll state
   const { scrollY } = useScroll()
@@ -489,28 +491,22 @@ export default function Landing() {
     return unsub
   }, [scrollY])
 
-  // Detect mobile for performance
-  const [isMobile, setIsMobile] = useState(false)
+  // Detect mobile for performance — lazy initializer avoids setState-in-effect
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 768)
   useEffect(() => {
-    setIsMobile(window.innerWidth < 768)
     const fn = () => setIsMobile(window.innerWidth < 768)
-    window.addEventListener('resize', fn)
+    window.addEventListener('resize', fn, { passive: true })
     return () => window.removeEventListener('resize', fn)
   }, [])
 
-  // Navbar button hover
-  const [navBtnHover, setNavBtnHover] = useState(false)
   const [primaryHover, setPrimaryHover] = useState(false)
   const [ghostHover,   setGhostHover]   = useState(false)
 
   return (
-    <div style={{ background:C.void, overflowX:'hidden', minHeight:'100vh', cursor:'none' }}>
+    <div style={{ background:C.void, overflowX:'hidden', minHeight:'100vh' }}>
 
       {/* ── Global styles ──────────────────────────────────────────────────── */}
       <style>{`
-        * { cursor: none !important; }
-        @media (max-width: 768px) { * { cursor: auto !important; } }
-
         @keyframes ping-gold {
           0%   { transform: scale(1);   opacity: 1; }
           75%  { transform: scale(2.5); opacity: 0; }
@@ -750,6 +746,7 @@ export default function Landing() {
             text="Students reflect weekly. AI spots what matters. Mentors arrive prepared."
             startDelay={1400}
             speed={35}
+            skip={!!skip}
           />
 
           {/* CTA buttons */}
@@ -897,7 +894,7 @@ export default function Landing() {
       {/* ════════════════════════════════════════════════════════════════════
           FEATURES — PINNED SCROLL SECTION
       ════════════════════════════════════════════════════════════════════ */}
-      <FeaturesSection skip={skip} />
+      <FeaturesSection />
 
       {/* ════════════════════════════════════════════════════════════════════
           BENTO GRID — ROLE CARDS
@@ -1130,7 +1127,7 @@ function AnalyticsMockup() {
   )
 }
 
-function FeaturesSection({ skip }) {
+function FeaturesSection() {
   return (
     <section style={{ background:C.void, padding:'160px 0' }}>
       <div style={{ maxWidth:'80rem', margin:'0 auto', padding:'0 32px' }}>
@@ -1204,4 +1201,3 @@ function FeaturesSection({ skip }) {
   )
 }
 
-const C_feat = C  // alias for components defined after Landing
