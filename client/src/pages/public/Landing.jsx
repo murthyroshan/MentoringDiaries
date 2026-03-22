@@ -1,708 +1,1207 @@
-import { useRef, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import {
-  motion,
-  useReducedMotion,
-  useInView,
-  useMotionValue,
-  animate,
+  useEffect, useRef, useState, useCallback, lazy, Suspense,
+} from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import {
+  motion, useReducedMotion, useScroll, useTransform,
+  useMotionValue, useSpring, AnimatePresence,
 } from 'framer-motion'
 
-// ─── Animation Variants ───────────────────────────────────────────────────────
+// Stable motion-wrapped Link — must be outside any component
+const MotionLink = motion(Link)
+import Lenis from 'lenis'
+import HeroCards   from '../../components/landing/HeroCards'
+import MarqueeSection from '../../components/landing/MarqueeRow'
+import BentoGrid   from '../../components/landing/BentoGrid'
 
-const fadeUp = {
-  hidden:  { opacity: 0, y: 24 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease: [0.16, 1, 0.3, 1] } },
+const ParticleField = lazy(() => import('../../components/landing/ParticleField'))
+
+// ── Design tokens ─────────────────────────────────────────────────────────────
+const C = {
+  void:      '#06060A',
+  dark:      '#0C0C12',
+  surface:   '#111118',
+  elevated:  '#16161F',
+  border:    'rgba(255,255,255,0.06)',
+  borderLit: 'rgba(255,220,100,0.2)',
+  gold:      '#E8B84B',
+  goldLight: '#F5D380',
+  goldDim:   'rgba(232,184,75,0.15)',
+  ember:     '#D4622A',
+  emberDim:  'rgba(212,98,42,0.12)',
+  text:      '#F2F0E8',
+  muted:     'rgba(242,240,232,0.45)',
+  subtle:    'rgba(242,240,232,0.2)',
+  green:     '#3DD68C',
 }
 
-const staggerContainer = {
-  hidden:  {},
-  visible: { transition: { staggerChildren: 0.15 } },
-}
-
-// ─── Animated Counter ─────────────────────────────────────────────────────────
-
-function AnimatedCounter({ to, suffix = '', duration = 1.5 }) {
-  const ref          = useRef(null)
-  const isInView     = useInView(ref, { once: true })
-  const motionValue  = useMotionValue(0)
-  const [display, setDisplay] = useState(0)
-  const shouldReduce = useReducedMotion()
+// ── Smooth scroll with Lenis ──────────────────────────────────────────────────
+function useSmoothScroll(skip) {
+  const lenisRef = useRef(null)
 
   useEffect(() => {
-    if (!isInView) return
-    if (shouldReduce) { setDisplay(to); return }
-    const controls = animate(motionValue, to, {
-      duration,
-      ease: 'easeOut',
-      onUpdate: (v) => setDisplay(Math.round(v)),
+    if (skip) return
+    const lenis = new Lenis({
+      duration: 1.4,
+      easing:   (t) => Math.min(1, 1.001 - Math.pow(2, -10 * t)),
     })
-    return controls.stop
-  }, [isInView, to, duration, shouldReduce, motionValue])
+    lenisRef.current = lenis
+    let active = true
 
-  return <span ref={ref}>{display}{suffix}</span>
+    function raf(time) {
+      if (!active) return
+      lenis.raf(time)
+      requestAnimationFrame(raf)
+    }
+    requestAnimationFrame(raf)
+
+    return () => {
+      active = false
+      lenis.destroy()
+    }
+  }, [skip])
+
+  return lenisRef
 }
 
-// ─── SVG Icons ────────────────────────────────────────────────────────────────
+// ── CountUp ───────────────────────────────────────────────────────────────────
+function useCountUp(target, duration = 1500, skip = false) {
+  const [count, setCount] = useState(skip ? target : 0)
+  const ref   = useRef(null)
+  const ran   = useRef(false)
 
-function PencilIcon() {
+  useEffect(() => {
+    if (skip) { setCount(target); return }
+    const el = ref.current
+    if (!el) return
+    const io = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting || ran.current) return
+      ran.current = true
+      const t0 = performance.now()
+      const tick = (now) => {
+        const p  = Math.min((now - t0) / duration, 1)
+        const ep = 1 - (1 - p) ** 3
+        setCount(Math.round(ep * target))
+        if (p < 1) requestAnimationFrame(tick)
+      }
+      requestAnimationFrame(tick)
+    }, { threshold: 0.4 })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [target, duration, skip])
+
+  return [count, ref]
+}
+
+// ── Magnetic button ───────────────────────────────────────────────────────────
+function MagneticButton({ children, strength = 6, style = {}, onClick, to, className = '', onMouseEnter, onMouseLeave: onLeaveExt, 'data-cursor': dc = 'button' }) {
+  const ref   = useRef(null)
+  const bx    = useMotionValue(0)
+  const by    = useMotionValue(0)
+  const sbx   = useSpring(bx, { stiffness: 200, damping: 20 })
+  const sby   = useSpring(by, { stiffness: 200, damping: 20 })
+
+  const onMove = useCallback((e) => {
+    if (!ref.current) return
+    const rect = ref.current.getBoundingClientRect()
+    const cx   = rect.left + rect.width  / 2
+    const cy   = rect.top  + rect.height / 2
+    const dx   = e.clientX - cx
+    const dy   = e.clientY - cy
+    const dist = Math.sqrt(dx * dx + dy * dy)
+    if (dist < 120) {
+      bx.set((dx / dist) * strength)
+      by.set((dy / dist) * strength)
+    }
+  }, [bx, by, strength])
+
+  const onLeave = useCallback((e) => {
+    bx.set(0)
+    by.set(0)
+    onLeaveExt?.(e)
+  }, [bx, by, onLeaveExt])
+
+  const sharedProps = {
+    ref,
+    'data-cursor': dc,
+    className,
+    onMouseMove:   onMove,
+    onMouseLeave:  onLeave,
+    onMouseEnter,
+    style: { x: sbx, y: sby, textDecoration: 'none', ...style },
+  }
+
+  if (to) {
+    return <MotionLink to={to} {...sharedProps}>{children}</MotionLink>
+  }
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="w-7 h-7" aria-hidden>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 3.487a2.25 2.25 0 113.182 3.182L7.5 19.213l-4.5 1.5 1.5-4.5L16.862 3.487z" />
-    </svg>
+    <motion.button type="button" onClick={onClick} {...sharedProps}>
+      {children}
+    </motion.button>
   )
 }
 
-function SparkleIcon() {
+// ── Typewriter ────────────────────────────────────────────────────────────────
+function Typewriter({ text, startDelay = 1200, speed = 35 }) {
+  const [displayed, setDisplayed] = useState('')
+  const [done,      setDone]      = useState(false)
+
+  useEffect(() => {
+    let i   = 0
+    const tid = setTimeout(() => {
+      const iv = setInterval(() => {
+        i++
+        setDisplayed(text.slice(0, i))
+        if (i >= text.length) { clearInterval(iv); setDone(true) }
+      }, speed)
+      return () => clearInterval(iv)
+    }, startDelay)
+    return () => clearTimeout(tid)
+  }, [text, startDelay, speed])
+
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="w-7 h-7" aria-hidden>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
-    </svg>
+    <p style={{
+      fontSize:'clamp(1rem, 2vw, 1.25rem)',
+      color: C.muted,
+      maxWidth:'600px',
+      margin:'32px auto 0',
+      lineHeight:1.7,
+      minHeight:'2.2em',
+    }}>
+      {displayed}
+      <motion.span
+        animate={{ opacity: done ? [1,0,1] : 1 }}
+        transition={{ duration:0.7, repeat:Infinity }}
+        style={{ color:C.gold, fontWeight:300 }}
+      >|</motion.span>
+    </p>
   )
 }
 
-function ChatHeartIcon() {
+// ── Word-by-word headline ─────────────────────────────────────────────────────
+function AnimatedHeadline({ lines, skip }) {
+  const words = lines.flatMap((line, li) =>
+    line.text.split(' ').map((w, wi) => ({ word: w, isGold: line.gold, li, wi }))
+  )
+
   return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="w-7 h-7" aria-hidden>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12.5 9.5c-.55 0-.95.4-1.5 1-.55-.6-.95-1-1.5-1A1.5 1.5 0 008 11c0 2 3 3.5 3 3.5s3-1.5 3-3.5A1.5 1.5 0 0012.5 9.5z" />
-    </svg>
+    <h1 style={{
+      fontFamily:    'Sora, system-ui, sans-serif',
+      fontSize:      'clamp(3rem, 8vw, 8rem)',
+      fontWeight:    800,
+      lineHeight:    0.95,
+      letterSpacing: '-0.03em',
+      margin:        0,
+    }}>
+      {lines.map((line, li) => (
+        <div key={li} style={{ display:'block' }}>
+          {line.text.split(' ').map((word, wi) => {
+            const idx = words.findIndex(w => w.li === li && w.wi === wi)
+            return (
+              <motion.span
+                key={wi}
+                initial={skip ? {} : { opacity:0, y:40, rotateX:-20 }}
+                animate={skip ? {} : { opacity:1, y:0,  rotateX:0   }}
+                transition={{ duration:0.6, delay: idx * 0.06, ease:[0.25, 0.1, 0.25, 1] }}
+                style={{
+                  display:           'inline-block',
+                  marginRight:       '0.25em',
+                  color:             line.gold ? C.gold : 'rgba(242,240,232,0.90)',
+                  textShadow:        line.gold ? '0 0 80px rgba(232,184,75,0.4)' : 'none',
+                  transformOrigin:   'bottom center',
+                  perspectiveOrigin: 'bottom center',
+                }}
+              >
+                {word}
+              </motion.span>
+            )
+          })}
+        </div>
+      ))}
+    </h1>
   )
 }
 
-function GraduationCapIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth={2} className="w-4 h-4" aria-hidden>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4.26 10.147a60.438 60.438 0 00-.491 6.347A48.63 48.63 0 0112 20.904a48.63 48.63 0 018.232-4.41 60.46 60.46 0 00-.491-6.347m-15.482 0a50.636 50.636 0 00-2.658-.813A59.906 59.906 0 0112 3.493a59.903 59.903 0 0110.399 5.84c-.896.248-1.783.52-2.658.814m-15.482 0A50.717 50.717 0 0112 13.489a50.702 50.702 0 017.74-3.342M6.75 15a.75.75 0 100-1.5.75.75 0 000 1.5zm0 0v-3.675A55.378 55.378 0 0112 8.443m-7.007 11.55A5.981 5.981 0 006.75 15.75v-1.5" />
-    </svg>
-  )
-}
+// ── How It Works — 3D flip cards ──────────────────────────────────────────────
+const HOW_STEPS = [
+  {
+    n:'01', emoji:'✍️',
+    title:'Student writes',
+    desc:'Log your week — reflections, challenges, wins, and how you\'re really feeling.',
+    backDesc:'Each entry is private, unstructured, and yours. Students complete their diary in minutes with mood tracking and free text.',
+    stat:'85% completion rate',
+  },
+  {
+    n:'02', emoji:'🤖',
+    title:'AI analyzes',
+    desc:'Groq AI scans every entry for sentiment patterns, risk signals, and engagement levels.',
+    backDesc:'Llama 3.1 processes language at 500+ tokens/second. Risk scores, sentiment trends, and key themes extracted instantly.',
+    stat:'< 2s analysis time',
+  },
+  {
+    n:'03', emoji:'💬',
+    title:'Mentor responds',
+    desc:'Your mentor gets full context and AI suggestions — so their response actually helps.',
+    backDesc:'Mentors arrive prepared with an AI brief, flagged risks, and suggested discussion points. No cold reading, no guesswork.',
+    stat:'< 24h response time',
+  },
+]
 
-function CheckIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 mt-0.5 shrink-0 text-success-500" aria-hidden>
-      <path fillRule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clipRule="evenodd" />
-    </svg>
-  )
-}
+function FlipCard({ step, skip }) {
+  const [flipped, setFlipped] = useState(false)
 
-// ─── Hero Floating Cards ──────────────────────────────────────────────────────
-
-function DiaryEntryCard({ shouldReduce }) {
   return (
     <motion.div
-      variants={fadeUp}
-      className="relative"
+      initial={{ opacity:0, y:60 }}
+      whileInView={{ opacity:1, y:0 }}
+      viewport={{ once:true, margin:'-80px' }}
+      transition={{ duration:0.7, ease:[0.25, 0.1, 0.25, 1] }}
+      style={{ perspective:'1000px', width:'320px', height:'360px', cursor:'pointer', flexShrink:0 }}
+      onMouseEnter={() => !skip && setFlipped(true)}
+      onMouseLeave={() => !skip && setFlipped(false)}
+      data-cursor="hover"
     >
       <motion.div
-        animate={shouldReduce ? {} : {
-          y: [0, -10, 0],
-          transition: { duration: 4, repeat: Infinity, ease: 'easeInOut' },
-        }}
-        className="glass-card p-4 w-64 shadow-lg"
+        animate={{ rotateY: flipped ? 180 : 0 }}
+        transition={{ duration:0.6, ease:[0.4, 0, 0.2, 1] }}
+        style={{ width:'100%', height:'100%', position:'relative', transformStyle:'preserve-3d' }}
       >
-        <div className="flex items-center gap-2 mb-3">
-          <div className="w-6 h-6 rounded-full bg-primary-100 flex items-center justify-center">
-            <div className="w-2 h-2 rounded-full bg-primary-600" />
-          </div>
-          <span className="text-xs font-semibold text-neutral-600">Today's Entry</span>
-          <span className="ml-auto text-xs text-neutral-400">just now</span>
+        {/* Front */}
+        <div style={{
+          position:   'absolute', inset:0,
+          background: C.surface,
+          border:     `1px solid ${C.border}`,
+          borderRadius:'24px', padding:'36px',
+          backfaceVisibility:'hidden',
+          WebkitBackfaceVisibility:'hidden',
+          display:'flex', flexDirection:'column',
+        }}>
+          <span style={{
+            position:'absolute', top:'20px', right:'24px',
+            fontSize:'80px', fontWeight:900,
+            color:'rgba(255,255,255,0.03)',
+            lineHeight:1, fontFamily:'Sora, system-ui, sans-serif',
+            userSelect:'none',
+          }}>{step.n}</span>
+          <div style={{
+            width:'56px', height:'56px', borderRadius:'16px',
+            background:'rgba(232,184,75,0.1)',
+            display:'flex', alignItems:'center', justifyContent:'center',
+            fontSize:'28px', marginBottom:'20px',
+          }}>{step.emoji}</div>
+          <h3 style={{ fontFamily:'Sora, system-ui, sans-serif', fontSize:'22px', fontWeight:700, color:C.text, marginBottom:'10px' }}>
+            {step.title}
+          </h3>
+          <p style={{ fontSize:'14px', color:C.muted, lineHeight:1.65, flex:1 }}>{step.desc}</p>
+          <p style={{ fontSize:'11px', color:C.subtle, marginTop:'16px' }}>Hover to see more →</p>
         </div>
-        <p className="text-xs text-neutral-700 leading-relaxed">
-          "Completed the React module. Still finding hooks tricky, but it's starting to click..."
-        </p>
-        <div className="mt-3 flex gap-1.5">
-          <span className="badge bg-primary-50 text-primary-700 border border-primary-200">Reflection</span>
-          <span className="badge bg-accent-50 text-accent-700 border border-accent-200">Progress</span>
+
+        {/* Back */}
+        <div style={{
+          position:   'absolute', inset:0,
+          background: `linear-gradient(135deg, rgba(232,184,75,0.08), rgba(212,98,42,0.08))`,
+          border:     `1px solid rgba(232,184,75,0.2)`,
+          borderRadius:'24px', padding:'36px',
+          backfaceVisibility:'hidden',
+          WebkitBackfaceVisibility:'hidden',
+          transform:'rotateY(180deg)',
+          display:'flex', flexDirection:'column', justifyContent:'space-between',
+        }}>
+          <div>
+            <div style={{
+              display:'inline-block', fontSize:'11px', fontWeight:600,
+              letterSpacing:'0.1em', textTransform:'uppercase',
+              color:C.gold, border:`1px solid rgba(232,184,75,0.3)`,
+              borderRadius:'9999px', padding:'4px 12px', marginBottom:'16px',
+            }}>Step {step.n}</div>
+            <p style={{ fontSize:'14px', color:'rgba(242,240,232,0.75)', lineHeight:1.7 }}>
+              {step.backDesc}
+            </p>
+          </div>
+          <div style={{
+            background:'rgba(232,184,75,0.1)', borderRadius:'12px',
+            padding:'12px 16px', display:'flex', alignItems:'center', gap:'8px',
+          }}>
+            <span style={{ fontSize:'20px' }}>📊</span>
+            <span style={{ fontSize:'14px', fontWeight:600, color:C.gold }}>{step.stat}</span>
+          </div>
         </div>
       </motion.div>
     </motion.div>
   )
 }
 
-function AiRiskCard({ shouldReduce }) {
-  const circumference = 2 * Math.PI * 32
+// ── Stat item ─────────────────────────────────────────────────────────────────
+function StatItem({ to, prefix = '', suffix = '', label, skip }) {
+  const [count, ref] = useCountUp(to, 1500, skip)
   return (
-    <motion.div
-      variants={fadeUp}
-      className="relative"
-    >
-      <motion.div
-        animate={shouldReduce ? {} : {
-          y: [0, 10, 0],
-          transition: { duration: 5, repeat: Infinity, ease: 'easeInOut', delay: 0.8 },
-        }}
-        className="glass-card p-5 w-52 shadow-lg"
-      >
-        <p className="text-xs font-semibold text-neutral-500 mb-3 text-center">AI Risk Score</p>
-        <div className="flex items-center justify-center mb-3">
-          <svg width="80" height="80" viewBox="0 0 80 80" aria-label="Risk score: 82, On Track">
-            <circle cx="40" cy="40" r="32" fill="none" stroke="#E7E5E4" strokeWidth="7" />
-            <circle
-              cx="40" cy="40" r="32"
-              fill="none"
-              stroke="#10B981"
-              strokeWidth="7"
-              strokeLinecap="round"
-              strokeDasharray={`${circumference * 0.82} ${circumference * 0.18}`}
-              strokeDashoffset={circumference * 0.25}
-              transform="rotate(-90 40 40)"
-            />
-            <text x="40" y="45" textAnchor="middle" fill="#10B981" fontSize="18" fontWeight="700" fontFamily="Sora, sans-serif">82</text>
-          </svg>
-        </div>
-        <div className="flex items-center justify-center gap-1.5">
-          <span className="w-2 h-2 rounded-full bg-success-500" />
-          <span className="text-xs text-success-700 font-semibold">On Track</span>
-        </div>
-      </motion.div>
-    </motion.div>
-  )
-}
-
-function MentorResponseCard({ shouldReduce }) {
-  return (
-    <motion.div
-      variants={fadeUp}
-      className="relative"
-    >
-      <motion.div
-        animate={shouldReduce ? {} : {
-          y: [0, -7, 0],
-          transition: { duration: 4.5, repeat: Infinity, ease: 'easeInOut', delay: 1.6 },
-        }}
-        className="glass-card p-4 w-60 shadow-lg"
-      >
-        <div className="flex items-center gap-2 mb-3">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary-500 to-accent-400 flex items-center justify-center shrink-0">
-            <span className="text-white text-xs font-bold">DR</span>
-          </div>
-          <div className="min-w-0">
-            <p className="text-xs font-semibold text-neutral-800 truncate">Dr. Rivera</p>
-            <p className="text-xs text-neutral-400">Your Mentor</p>
-          </div>
-        </div>
-        <div className="bg-primary-50 rounded-lg p-2.5">
-          <p className="text-xs text-primary-800 leading-relaxed">
-            "Great reflection! Keep pushing — your progress is really showing. 🎯"
-          </p>
-        </div>
-        <p className="text-right text-xs text-neutral-400 mt-1.5">2h ago</p>
-      </motion.div>
-    </motion.div>
-  )
-}
-
-// ─── Animated Dashed Connector ────────────────────────────────────────────────
-
-function ConnectorLine() {
-  const ref      = useRef(null)
-  const isInView = useInView(ref, { once: true })
-  const shouldReduce = useReducedMotion()
-
-  return (
-    <div
-      ref={ref}
-      className="hidden md:block absolute inset-x-0 pointer-events-none"
-      style={{ top: '60px', padding: '0 16.67%' }}
-      aria-hidden
-    >
-      <svg className="w-full h-6" viewBox="0 0 400 24" fill="none" preserveAspectRatio="none">
-        <motion.path
-          d="M 0 12 L 400 12"
-          stroke="#C7D2FE"
-          strokeWidth="2"
-          strokeDasharray="6 4"
-          strokeLinecap="round"
-          initial={{ pathLength: 0, opacity: 0 }}
-          animate={isInView && !shouldReduce ? { pathLength: 1, opacity: 1 } : (shouldReduce && isInView ? { pathLength: 1, opacity: 1 } : {})}
-          transition={{ duration: 1.2, ease: 'easeInOut', delay: 0.3 }}
-        />
-      </svg>
+    <div ref={ref} style={{ textAlign:'center' }}>
+      <p style={{
+        fontSize:'2.5rem', fontWeight:900, color:C.text,
+        fontFamily:'Sora, system-ui, sans-serif', lineHeight:1,
+      }}>
+        {prefix}{skip ? to : count}{suffix}
+      </p>
+      <p style={{ fontSize:'13px', color:C.subtle, marginTop:'6px' }}>{label}</p>
+      <div style={{ width:'32px', height:'1px', background:'rgba(232,184,75,0.4)', margin:'12px auto 0' }} />
     </div>
   )
 }
 
-// ─── Role Card Data ───────────────────────────────────────────────────────────
+// ── Final CTA countdown ───────────────────────────────────────────────────────
+function FinalCTAContent({ skip }) {
+  const [phase, setPhase] = useState(0)
+  const ref = useRef(null)
+  const triggered = useRef(false)
 
-const roleCards = [
-  {
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="w-7 h-7" aria-hidden>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
-      </svg>
-    ),
-    title: 'Student',
-    colorKey: 'primary',
-    points: [
-      'Write daily reflective diary entries',
-      'Track your growth with AI-powered insights',
-      'Get direct feedback from your assigned mentor',
-    ],
-  },
-  {
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="w-7 h-7" aria-hidden>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-      </svg>
-    ),
-    title: 'Mentor',
-    colorKey: 'accent',
-    points: [
-      'Review student entries and flag concerns',
-      'Respond with rich feedback and guidance',
-      'Monitor student progress at a glance',
-    ],
-  },
-  {
-    icon: (
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} className="w-7 h-7" aria-hidden>
-        <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0H3" />
-      </svg>
-    ),
-    title: 'Admin',
-    colorKey: 'neutral',
-    points: [
-      'Manage users, roles, and permissions',
-      'View institution-wide risk analytics',
-      'Ensure compliance and data integrity',
-    ],
-  },
-]
-
-const roleColors = {
-  primary: {
-    icon: 'bg-primary-50 text-primary-600',
-    badge: 'bg-primary-600',
-    hover: 'hover:border-primary-300',
-    glow: { boxShadow: '0 8px 32px rgba(79,70,229,0.18)' },
-  },
-  accent: {
-    icon: 'bg-accent-50 text-accent-600',
-    badge: 'bg-accent-500',
-    hover: 'hover:border-accent-300',
-    glow: { boxShadow: '0 8px 32px rgba(245,158,11,0.18)' },
-  },
-  neutral: {
-    icon: 'bg-neutral-100 text-neutral-600',
-    badge: 'bg-neutral-600',
-    hover: 'hover:border-neutral-400',
-    glow: { boxShadow: '0 8px 32px rgba(0,0,0,0.10)' },
-  },
-}
-
-// ─── Main Component ───────────────────────────────────────────────────────────
-
-export default function Landing() {
-  const shouldReduce = useReducedMotion()
-
-  const baseTransition = shouldReduce
-    ? { duration: 0 }
-    : { duration: 0.5, ease: [0.16, 1, 0.3, 1] }
-
-  const scrollToHowItWorks = () => {
-    document.getElementById('how-it-works')?.scrollIntoView({ behavior: shouldReduce ? 'auto' : 'smooth' })
-  }
+  useEffect(() => {
+    if (skip) { setPhase(4); return }
+    const el = ref.current
+    if (!el) return
+    const io = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting || triggered.current) return
+      triggered.current = true
+      setPhase(1)
+      setTimeout(() => setPhase(2), 700)
+      setTimeout(() => setPhase(3), 1400)
+      setTimeout(() => setPhase(4), 2100)
+    }, { threshold:0.5 })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [skip])
 
   return (
-    <div className="min-h-screen overflow-x-hidden" style={{ background: 'rgb(var(--bg-primary))' }}>
+    <div ref={ref} style={{ textAlign:'center', position:'relative', zIndex:10 }}>
+      {/* Countdown numbers 1-3 */}
+      <AnimatePresence mode="wait">
+        {phase > 0 && phase < 4 && (
+          <motion.div
+            key={`num-${phase}`}
+            initial={{ opacity:0, scale:0.5 }}
+            animate={{ opacity:1, scale:1 }}
+            exit={{ opacity:0, scale:1.5 }}
+            transition={{ duration:0.5 }}
+            style={{
+              fontSize:'clamp(8rem, 20vw, 14rem)',
+              fontWeight:900, color:C.gold,
+              fontFamily:'Sora, system-ui, sans-serif',
+              lineHeight:1,
+              textShadow:`0 0 120px rgba(232,184,75,0.5)`,
+              position:'absolute', top:'50%', left:'50%',
+              transform:'translate(-50%, -50%)',
+              userSelect:'none',
+            }}
+          >
+            {['','01','02','03'][phase]}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {/* ── Keyframes (scoped inline) ─────────────────────────────────────── */}
+      {/* Final content */}
+      <AnimatePresence>
+        {phase === 4 && (
+          <motion.div
+            initial={{ opacity:0 }}
+            animate={{ opacity:1 }}
+            transition={{ duration:0.8 }}
+          >
+            <motion.h2
+              style={{
+                fontFamily:'Sora, system-ui, sans-serif',
+                fontSize:'clamp(2.5rem, 7vw, 5.5rem)',
+                fontWeight:900, color:C.text,
+                letterSpacing:'-0.03em',
+                lineHeight:1.05, marginBottom:'24px',
+              }}
+            >
+              {['Your','students','deserve','better.'].map((w,i) => (
+                <motion.span
+                  key={i}
+                  initial={{ opacity:0, y:30 }}
+                  animate={{ opacity:1, y:0 }}
+                  transition={{ delay: i * 0.1, duration:0.5 }}
+                  style={{ display:'inline-block', marginRight:'0.3em' }}
+                >
+                  {w}
+                </motion.span>
+              ))}
+            </motion.h2>
+
+            <motion.p
+              initial={{ opacity:0 }}
+              animate={{ opacity:1 }}
+              transition={{ delay:0.6 }}
+              style={{ fontSize:'clamp(1rem, 2vw, 1.25rem)', color:C.muted, marginBottom:'56px' }}
+            >
+              Give them a mentor who's always prepared.
+            </motion.p>
+
+            <motion.div
+              initial={{ opacity:0, y:20 }}
+              animate={{ opacity:1, y:0 }}
+              transition={{ delay:0.9 }}
+            >
+              <MagneticButton
+                to="/register"
+                strength={8}
+                style={{
+                  display:'inline-flex', alignItems:'center', gap:'12px',
+                  background:`linear-gradient(135deg, ${C.gold}, ${C.goldLight})`,
+                  color:'#06060A', fontWeight:700, fontSize:'1.2rem',
+                  padding:'24px 48px', borderRadius:'20px',
+                  border:'none', cursor:'pointer',
+                  boxShadow:'0 0 0 rgba(232,184,75,0)',
+                  transition:'box-shadow 0.3s, transform 0.3s',
+                  willChange:'transform',
+                }}
+                onMouseEnter={e => e.currentTarget.style.boxShadow = '0 30px 100px rgba(232,184,75,0.5)'}
+                onMouseLeave={e => e.currentTarget.style.boxShadow = '0 0 0 rgba(232,184,75,0)'}
+              >
+                Begin your journey
+                <svg viewBox="0 0 20 20" fill="currentColor" style={{ width:'20px', height:'20px' }}>
+                  <path fillRule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" />
+                </svg>
+              </MagneticButton>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+// ── Main Landing ──────────────────────────────────────────────────────────────
+export default function Landing() {
+  const skip    = useReducedMotion()
+  const navigate = useNavigate()
+  const lenisRef = useSmoothScroll(skip)
+
+  // Scroll state
+  const { scrollY } = useScroll()
+  const [scrolled,     setScrolled]     = useState(false)
+  const [heroScrolled, setHeroScrolled] = useState(false)
+
+  useEffect(() => {
+    const unsub = scrollY.on('change', (v) => {
+      setScrolled(v > 80)
+      setHeroScrolled(v > 100)
+    })
+    return unsub
+  }, [scrollY])
+
+  // Detect mobile for performance
+  const [isMobile, setIsMobile] = useState(false)
+  useEffect(() => {
+    setIsMobile(window.innerWidth < 768)
+    const fn = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', fn)
+    return () => window.removeEventListener('resize', fn)
+  }, [])
+
+  // Navbar button hover
+  const [navBtnHover, setNavBtnHover] = useState(false)
+  const [primaryHover, setPrimaryHover] = useState(false)
+  const [ghostHover,   setGhostHover]   = useState(false)
+
+  return (
+    <div style={{ background:C.void, overflowX:'hidden', minHeight:'100vh', cursor:'none' }}>
+
+      {/* ── Global styles ──────────────────────────────────────────────────── */}
       <style>{`
-        @keyframes gradientCycle {
-          0%   { background-position: 0% 50%; }
-          50%  { background-position: 100% 50%; }
-          100% { background-position: 0% 50%; }
+        * { cursor: none !important; }
+        @media (max-width: 768px) { * { cursor: auto !important; } }
+
+        @keyframes ping-gold {
+          0%   { transform: scale(1);   opacity: 1; }
+          75%  { transform: scale(2.5); opacity: 0; }
+          100% { transform: scale(2.5); opacity: 0; }
         }
+        @keyframes ping-gold-2 {
+          0%   { transform: scale(1);   opacity: 0.7; }
+          100% { transform: scale(3.5); opacity: 0; }
+        }
+        @keyframes orb-drift-1 {
+          0%,100% { transform: translate(0,0); }
+          33%     { transform: translate(30px,-20px); }
+          66%     { transform: translate(-15px,15px); }
+        }
+        @keyframes orb-drift-2 {
+          0%,100% { transform: translate(0,0); }
+          33%     { transform: translate(-30px,20px); }
+          66%     { transform: translate(20px,-15px); }
+        }
+        @keyframes scroll-line {
+          0%   { transform: scaleY(0); transform-origin: top; }
+          50%  { transform: scaleY(1); transform-origin: top; }
+          100% { transform: scaleY(0); transform-origin: bottom; }
+        }
+        .nav-underline {
+          position: relative;
+          text-decoration: none;
+        }
+        .nav-underline::after {
+          content: '';
+          position: absolute;
+          bottom: -2px; left: 0;
+          height: 1px; width: 100%;
+          background: #F2F0E8;
+          transform: scaleX(0);
+          transform-origin: left;
+          transition: transform 0.25s ease;
+        }
+        .nav-underline:hover::after { transform: scaleX(1); }
+
+        .get-started-btn {
+          position: relative;
+          overflow: hidden;
+        }
+        .get-started-btn::before {
+          content: '';
+          position: absolute;
+          bottom: 0; left: 0; right: 0;
+          height: 0;
+          background: #E8B84B;
+          transition: height 0.3s ease;
+          z-index: 0;
+        }
+        .get-started-btn:hover::before { height: 100%; }
+        .get-started-btn span { position: relative; z-index: 1; transition: color 0.3s; }
+        .get-started-btn:hover span { color: #06060A; }
       `}</style>
 
-      {/* ── Navbar ───────────────────────────────────────────────────────── */}
+      {/* ════════════════════════════════════════════════════════════════════
+          NAVBAR
+      ════════════════════════════════════════════════════════════════════ */}
       <motion.nav
-        initial={{ opacity: 0, y: -14 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-        className="fixed top-0 left-0 right-0 z-50 glass border-b border-neutral-200/60"
+        initial={{ opacity:0, y:-16 }}
+        animate={{ opacity:1, y:0 }}
+        transition={{ duration:0.5 }}
+        style={{
+          position:'fixed', top:0, left:0, right:0, zIndex:50,
+          background:       scrolled ? 'rgba(6,6,10,0.75)' : 'transparent',
+          backdropFilter:   scrolled ? 'blur(24px) saturate(180%)' : 'none',
+          WebkitBackdropFilter: scrolled ? 'blur(24px) saturate(180%)' : 'none',
+          borderBottom:     scrolled ? '1px solid rgba(232,184,75,0.08)' : '1px solid transparent',
+          transition:       'background 0.4s, backdrop-filter 0.4s, border-color 0.4s',
+        }}
       >
-        <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+        <div style={{
+          maxWidth:'80rem', margin:'0 auto', padding:'0 32px',
+          height:'68px', display:'flex', alignItems:'center', justifyContent:'space-between',
+        }}>
           {/* Logo */}
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-600 to-primary-800 flex items-center justify-center shadow-sm">
-              <GraduationCapIcon />
-            </div>
-            <span className="font-display font-bold text-neutral-900 text-lg leading-none tracking-tight">
-              Mentoring<span className="text-primary-600">Diaries</span>
+          <Link to="/" style={{ display:'flex', alignItems:'center', gap:'10px', textDecoration:'none' }} data-cursor="hover">
+            <div style={{
+              width:'34px', height:'34px', borderRadius:'8px',
+              background:C.void, border:`1px solid rgba(232,184,75,0.3)`,
+              display:'flex', alignItems:'center', justifyContent:'center',
+              fontSize:'13px', fontWeight:800, color:C.gold,
+              fontFamily:'Sora, system-ui, sans-serif',
+              transition:'border-color 0.3s',
+            }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(232,184,75,0.8)'}
+              onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(232,184,75,0.3)'}
+            >MD</div>
+            <span style={{ fontSize:'15px', fontWeight:600, fontFamily:'Sora, system-ui, sans-serif' }}>
+              <span style={{ color:'rgba(242,240,232,0.7)' }}>Mentoring</span>
+              <span style={{ color:C.gold }}>Diaries</span>
             </span>
-          </div>
-          {/* Nav actions */}
-          <div className="flex items-center gap-2">
-            <Link to="/login" className="btn btn-ghost btn-sm hidden sm:inline-flex">
+          </Link>
+
+          {/* Actions */}
+          <div style={{ display:'flex', alignItems:'center', gap:'12px' }}>
+            <Link
+              to="/login"
+              className="nav-underline"
+              data-cursor="hover"
+              style={{ fontSize:'14px', color:'rgba(242,240,232,0.6)', padding:'8px 12px' }}
+              onMouseEnter={e => e.currentTarget.style.color = C.text}
+              onMouseLeave={e => e.currentTarget.style.color = 'rgba(242,240,232,0.6)'}
+            >
               Sign in
             </Link>
-            <Link to="/register" className="btn btn-primary btn-sm">
-              Get started
+            <Link
+              to="/register"
+              className="get-started-btn"
+              data-cursor="button"
+              style={{
+                display:'flex', alignItems:'center', gap:'0',
+                border:`1px solid rgba(232,184,75,0.3)`,
+                padding:'8px 20px', borderRadius:'10px',
+                fontSize:'14px', fontWeight:500,
+              }}
+            >
+              <span style={{ color:C.text }}>Get started</span>
             </Link>
           </div>
         </div>
       </motion.nav>
 
-      {/* ══════════════════════════════════════════════════════════════════
-          SECTION 1 — Hero
-      ══════════════════════════════════════════════════════════════════ */}
-      <section className="relative min-h-screen flex items-center pt-16 overflow-hidden gradient-hero">
+      {/* ════════════════════════════════════════════════════════════════════
+          HERO
+      ════════════════════════════════════════════════════════════════════ */}
+      <section style={{
+        minHeight:'100vh', background:C.void,
+        paddingTop:'160px', position:'relative', overflow:'hidden',
+      }}>
 
-        {/* Background orbs — CSS-only, slow drift */}
-        <div aria-hidden className="absolute inset-0 overflow-hidden pointer-events-none select-none">
-          <div
-            className="absolute -top-40 -left-40 w-[640px] h-[640px] rounded-full animate-blob"
-            style={{
-              background: 'radial-gradient(circle, rgba(79,70,229,0.18) 0%, transparent 68%)',
-              filter: 'blur(48px)',
-            }}
-          />
-          <div
-            className="absolute top-1/3 -right-32 w-[520px] h-[520px] rounded-full animate-blob animation-delay-2000"
-            style={{
-              background: 'radial-gradient(circle, rgba(245,158,11,0.13) 0%, transparent 68%)',
-              filter: 'blur(56px)',
-            }}
-          />
-          <div
-            className="absolute -bottom-24 left-1/4 w-[400px] h-[400px] rounded-full animate-blob animation-delay-4000"
-            style={{
-              background: 'radial-gradient(circle, rgba(99,102,241,0.10) 0%, transparent 68%)',
-              filter: 'blur(64px)',
-            }}
-          />
-        </div>
-
-        <div className="relative max-w-6xl mx-auto px-6 py-20 w-full grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-center">
-
-          {/* ── Left: text ───────────────────────────────────────────────── */}
-          <motion.div
-            variants={staggerContainer}
-            initial="hidden"
-            animate="visible"
-            className="space-y-7"
-          >
-            {/* Eyebrow badge */}
-            <motion.div variants={fadeUp}>
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-primary-50 text-primary-700 border border-primary-200">
-                <span className="w-1.5 h-1.5 rounded-full bg-primary-500 animate-pulse" />
-                Trusted by 500+ students
-              </span>
-            </motion.div>
-
-            {/* Headline */}
-            <motion.h1
-              variants={fadeUp}
-              className="font-display font-bold text-5xl lg:text-6xl text-neutral-900 leading-[1.08] tracking-tight"
-            >
-              Your growth,{' '}
-              <span
-                style={{
-                  background: 'linear-gradient(90deg, #4F46E5 0%, #F59E0B 50%, #4F46E5 100%)',
-                  backgroundSize: '200% auto',
-                  WebkitBackgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent',
-                  backgroundClip: 'text',
-                  animation: shouldReduce ? 'none' : 'gradientCycle 3.5s linear infinite',
-                }}
-              >
-                guided.
-              </span>
-            </motion.h1>
-
-            {/* Sub-headline */}
-            <motion.p
-              variants={fadeUp}
-              className="text-lg text-neutral-500 leading-relaxed max-w-md"
-            >
-              A warm, structured space where students reflect daily, AI watches over patterns,
-              and mentors arrive with the guidance that truly matters.
-            </motion.p>
-
-            {/* CTAs */}
-            <motion.div variants={fadeUp} className="flex flex-wrap gap-3">
-              <Link to="/register" className="btn btn-primary btn-lg">
-                Get Started
-              </Link>
-              <button
-                onClick={scrollToHowItWorks}
-                className="btn btn-ghost btn-lg border border-neutral-200 hover:border-neutral-300 gap-2"
-              >
-                See how it works
-                <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4" aria-hidden>
-                  <path fillRule="evenodd" d="M10 3a.75.75 0 01.75.75v10.638l3.96-4.158a.75.75 0 111.08 1.04l-5.25 5.5a.75.75 0 01-1.08 0l-5.25-5.5a.75.75 0 111.08-1.04l3.96 4.158V3.75A.75.75 0 0110 3z" clipRule="evenodd" />
-                </svg>
-              </button>
-            </motion.div>
-
-            {/* Animated counters */}
-            <motion.div variants={fadeUp} className="flex flex-wrap gap-8 pt-2">
-              {[
-                { to: 500, suffix: '+', label: 'Students' },
-                { to: 98,  suffix: '%', label: 'On-track' },
-                { to: 24,  suffix: 'hr', label: 'Response time' },
-              ].map(({ to, suffix, label }) => (
-                <div key={label}>
-                  <p className="font-display font-bold text-2xl text-neutral-900">
-                    <AnimatedCounter to={to} suffix={suffix} />
-                  </p>
-                  <p className="text-xs text-neutral-400 mt-0.5">{label}</p>
-                </div>
-              ))}
-            </motion.div>
-          </motion.div>
-
-          {/* ── Right: staggered floating cards ─────────────────────────── */}
-          <motion.div
-            variants={staggerContainer}
-            initial="hidden"
-            animate="visible"
-            className="relative hidden lg:block h-[480px]"
-            aria-hidden
-          >
-            {/* Soft ambient glow behind cards */}
-            <div
-              className="absolute inset-8 rounded-3xl pointer-events-none"
-              style={{ background: 'radial-gradient(ellipse at 55% 45%, rgba(79,70,229,0.07) 0%, transparent 70%)' }}
+        {/* Three.js particle field — desktop only */}
+        {!isMobile && !skip && (
+          <Suspense fallback={null}>
+            <ParticleField
+              style={{
+                position:'absolute', inset:0,
+                pointerEvents:'none', zIndex:0,
+              }}
             />
+          </Suspense>
+        )}
 
-            {/* Diary entry card — top-left */}
-            <div className="absolute top-2 left-0">
-              <DiaryEntryCard shouldReduce={shouldReduce} />
-            </div>
-
-            {/* AI risk score card — center-right */}
-            <div className="absolute top-[30%] right-0">
-              <AiRiskCard shouldReduce={shouldReduce} />
-            </div>
-
-            {/* Mentor response card — bottom-left */}
-            <div className="absolute bottom-4 left-10">
-              <MentorResponseCard shouldReduce={shouldReduce} />
-            </div>
-          </motion.div>
+        {/* Gradient orbs */}
+        <div aria-hidden style={{ position:'absolute', inset:0, pointerEvents:'none', overflow:'hidden', zIndex:1 }}>
+          <div style={{
+            position:'absolute', top:'10%', left:'20%',
+            width:'700px', height:'700px', borderRadius:'50%',
+            background:'radial-gradient(circle, rgba(232,184,75,0.06) 0%, transparent 70%)',
+            animation: skip ? 'none' : 'orb-drift-1 20s ease-in-out infinite',
+            willChange:'transform',
+          }} />
+          <div style={{
+            position:'absolute', top:'40%', right:'10%',
+            width:'500px', height:'500px', borderRadius:'50%',
+            background:'radial-gradient(circle, rgba(212,98,42,0.05) 0%, transparent 70%)',
+            animation: skip ? 'none' : 'orb-drift-2 25s ease-in-out infinite',
+            willChange:'transform',
+          }} />
+          <div style={{
+            position:'absolute', bottom:'20%', left:'40%',
+            width:'300px', height:'300px', borderRadius:'50%',
+            background:'radial-gradient(circle, rgba(232,184,75,0.04) 0%, transparent 70%)',
+          }} />
+          {/* Noise texture */}
+          <svg style={{ position:'absolute', inset:0, width:'100%', height:'100%', opacity:0.03 }}>
+            <filter id="noise">
+              <feTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch" />
+              <feColorMatrix type="saturate" values="0" />
+            </filter>
+            <rect width="100%" height="100%" filter="url(#noise)" />
+          </svg>
         </div>
-      </section>
 
-      {/* ══════════════════════════════════════════════════════════════════
-          SECTION 2 — How It Works
-      ══════════════════════════════════════════════════════════════════ */}
-      <section id="how-it-works" className="py-28 relative overflow-hidden">
-        {/* Section ambient */}
-        <div
-          aria-hidden
-          className="absolute inset-0 pointer-events-none"
-          style={{ background: 'radial-gradient(ellipse at 50% 0%, rgba(79,70,229,0.05) 0%, transparent 60%)' }}
-        />
+        {/* Hero content */}
+        <div style={{
+          position:'relative', zIndex:10,
+          maxWidth:'72rem', margin:'0 auto', padding:'0 32px',
+          textAlign:'center',
+        }}>
 
-        <div className="max-w-6xl mx-auto px-6">
-          {/* Heading */}
+          {/* Announce badge */}
           <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={baseTransition}
-            className="text-center mb-20"
+            initial={skip ? {} : { opacity:0, y:-20 }}
+            animate={{ opacity:1, y:0 }}
+            transition={{ duration:0.5, delay:0 }}
+            style={{ display:'flex', justifyContent:'center', marginBottom:'40px' }}
           >
-            <h2 className="font-display font-bold text-4xl lg:text-5xl text-neutral-900 mb-4 tracking-tight">
-              Simple. Structured. Supportive.
-            </h2>
-            <p className="text-neutral-500 text-lg max-w-md mx-auto">
-              Three steps. Infinite growth.
-            </p>
-          </motion.div>
-
-          {/* Steps grid + connector */}
-          <div className="relative">
-            <ConnectorLine />
-
-            <motion.div
-              variants={staggerContainer}
-              initial="hidden"
-              whileInView="visible"
-              viewport={{ once: true, margin: '-80px' }}
-              className="relative z-10 grid grid-cols-1 md:grid-cols-3 gap-8"
+            <div
+              data-cursor="hover"
+              style={{
+                display:'inline-flex', alignItems:'center', gap:'10px',
+                border:`1px solid rgba(232,184,75,0.2)`,
+                background:'rgba(232,184,75,0.05)',
+                backdropFilter:'blur(8px)',
+                borderRadius:'9999px', padding:'8px 20px',
+                transition:'background 0.3s, border-color 0.3s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background='rgba(232,184,75,0.1)'; e.currentTarget.style.borderColor='rgba(232,184,75,0.4)' }}
+              onMouseLeave={e => { e.currentTarget.style.background='rgba(232,184,75,0.05)'; e.currentTarget.style.borderColor='rgba(232,184,75,0.2)' }}
             >
-              {[
-                {
-                  step: '01',
-                  Icon: PencilIcon,
-                  title: 'Student writes',
-                  desc: 'Students log daily reflections, challenges, and wins in their personal growth diary.',
-                  accentClass: 'bg-primary-50 text-primary-600',
-                  stepColor: 'text-primary-400',
-                },
-                {
-                  step: '02',
-                  Icon: SparkleIcon,
-                  title: 'AI analyzes',
-                  desc: 'Our AI scans for sentiment patterns, risk signals, and engagement levels in real time.',
-                  accentClass: 'bg-accent-50 text-accent-600',
-                  stepColor: 'text-accent-400',
-                },
-                {
-                  step: '03',
-                  Icon: ChatHeartIcon,
-                  title: 'Mentor responds',
-                  desc: 'Mentors receive smart context and reply with personalized, timely guidance.',
-                  accentClass: 'bg-primary-50 text-primary-600',
-                  stepColor: 'text-primary-400',
-                },
-              ].map(({ step, Icon, title, desc, accentClass, stepColor }) => (
-                <motion.div
-                  key={step}
-                  variants={fadeUp}
-                  className="glass-card p-8 flex flex-col items-center text-center"
-                >
-                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-5 ${accentClass}`}>
-                    <Icon />
-                  </div>
-                  <span className={`text-[10px] font-bold tracking-[0.18em] uppercase mb-2 ${stepColor}`}>
-                    Step {step}
-                  </span>
-                  <h3 className="font-display font-semibold text-xl text-neutral-900 mb-3">{title}</h3>
-                  <p className="text-neutral-500 text-sm leading-relaxed">{desc}</p>
-                </motion.div>
-              ))}
-            </motion.div>
+              {/* Pulsing dot */}
+              <div style={{ position:'relative', width:'8px', height:'8px', flexShrink:0 }}>
+                <div style={{ position:'absolute', inset:0, borderRadius:'50%', background:C.gold, animation: skip ? 'none' : 'ping-gold 1.5s ease-out infinite' }} />
+                <div style={{ position:'absolute', inset:0, borderRadius:'50%', background:C.gold, animation: skip ? 'none' : 'ping-gold-2 1.5s ease-out 0.5s infinite' }} />
+                <div style={{ position:'relative', width:'8px', height:'8px', borderRadius:'50%', background:C.gold }} />
+              </div>
+              <span style={{ fontSize:'13px', color:'rgba(242,240,232,0.7)' }}>
+                Now with Groq AI · Llama 3.1 · Real-time analysis
+              </span>
+              <motion.span
+                whileHover={skip ? {} : { x:4 }}
+                style={{ color:C.gold, fontSize:'13px' }}
+              >→</motion.span>
+            </div>
+          </motion.div>
+
+          {/* Headline */}
+          <motion.div
+            style={{ transformPerspective:'1000px', marginBottom:0 }}
+          >
+            <AnimatedHeadline
+              skip={skip}
+              lines={[
+                { text:'Mentoring',       gold:false },
+                { text:'that actually',   gold:false },
+                { text:'works.',          gold:true  },
+              ]}
+            />
+          </motion.div>
+
+          {/* Typewriter subheadline */}
+          <Typewriter
+            text="Students reflect weekly. AI spots what matters. Mentors arrive prepared."
+            startDelay={1400}
+            speed={35}
+          />
+
+          {/* CTA buttons */}
+          <div style={{ display:'flex', gap:'20px', justifyContent:'center', marginTop:'48px', flexWrap:'wrap' }}>
+            {/* Primary — Start for free */}
+            <MagneticButton
+              to="/register"
+              strength={6}
+              style={{
+                display:'inline-flex', alignItems:'center', gap:'10px',
+                background:C.gold, color:'#06060A',
+                fontWeight:700, fontSize:'1rem',
+                padding:'16px 32px', borderRadius:'16px',
+                border:'none', cursor:'pointer',
+                boxShadow: primaryHover ? '0 20px 60px rgba(232,184,75,0.35)' : 'none',
+                transition:'box-shadow 0.3s, transform 0.2s',
+                willChange:'transform',
+              }}
+              onMouseEnter={() => setPrimaryHover(true)}
+              onMouseLeave={() => setPrimaryHover(false)}
+            >
+              Start for free
+              <motion.svg
+                animate={primaryHover && !skip ? { x:6 } : { x:0 }}
+                viewBox="0 0 20 20" fill="currentColor"
+                style={{ width:'18px', height:'18px' }}
+              >
+                <path fillRule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" />
+              </motion.svg>
+            </MagneticButton>
+
+            {/* Ghost — Watch it work */}
+            <MagneticButton
+              strength={3}
+              onClick={() => document.getElementById('how-it-works')?.scrollIntoView({ behavior: skip ? 'auto' : 'smooth' })}
+              style={{
+                display:'inline-flex', alignItems:'center', gap:'10px',
+                background:'transparent',
+                border:`1px solid ${ghostHover ? 'rgba(232,184,75,0.3)' : 'rgba(255,255,255,0.1)'}`,
+                color: ghostHover ? C.text : 'rgba(242,240,232,0.6)',
+                fontWeight:400, fontSize:'1rem',
+                padding:'16px 32px', borderRadius:'16px',
+                cursor:'pointer',
+                transition:'border-color 0.3s, color 0.3s',
+                willChange:'transform',
+              }}
+              onMouseEnter={() => setGhostHover(true)}
+              onMouseLeave={() => setGhostHover(false)}
+            >
+              Watch it work ↓
+            </MagneticButton>
+          </div>
+
+          {/* Scroll indicator */}
+          <motion.div
+            animate={heroScrolled ? { opacity:0 } : { opacity:1 }}
+            transition={{ duration:0.4 }}
+            style={{
+              display:'flex', flexDirection:'column', alignItems:'center', gap:'8px',
+              marginTop:'80px', pointerEvents:'none',
+            }}
+          >
+            <div style={{
+              width:'1px', height:'60px',
+              background:'rgba(232,184,75,0.4)',
+              animation: skip ? 'none' : 'scroll-line 1.8s ease-in-out infinite',
+            }} />
+            <span style={{ fontSize:'11px', color:'rgba(242,240,232,0.2)', letterSpacing:'0.12em', textTransform:'uppercase' }}>
+              scroll
+            </span>
+          </motion.div>
+
+          {/* Stats row */}
+          <div style={{
+            display:'flex', alignItems:'center', justifyContent:'center',
+            gap:'clamp(32px, 6vw, 80px)',
+            marginTop:'80px',
+            borderTop:`1px solid rgba(255,255,255,0.04)`, paddingTop:'40px',
+            flexWrap:'wrap',
+          }}>
+            <StatItem to={500} suffix="+" label="Students enrolled"     skip={skip} />
+            <div style={{ width:'1px', height:'40px', background:'rgba(255,255,255,0.08)' }} aria-hidden />
+            <StatItem to={98}  suffix="%" label="On-track rate"          skip={skip} />
+            <div style={{ width:'1px', height:'40px', background:'rgba(255,255,255,0.08)' }} aria-hidden />
+            <StatItem to={24}  prefix="<" suffix="h" label="Mentor response" skip={skip} />
           </div>
         </div>
+
+        {/* Floating hero cards */}
+        <HeroCards scrollY={scrollY} />
+
+        {/* Bottom gradient fade */}
+        <div aria-hidden style={{
+          position:'absolute', bottom:0, left:0, right:0, height:'140px',
+          background:`linear-gradient(to bottom, transparent, ${C.void})`,
+          pointerEvents:'none', zIndex:5,
+        }} />
       </section>
 
-      {/* ══════════════════════════════════════════════════════════════════
-          SECTION 3 — Role Cards + Final CTA
-      ══════════════════════════════════════════════════════════════════ */}
-      <section className="py-28" style={{ background: 'rgb(var(--bg-secondary))' }}>
-        <div className="max-w-6xl mx-auto px-6">
+      {/* ════════════════════════════════════════════════════════════════════
+          HOW IT WORKS — 3D FLIP CARDS
+      ════════════════════════════════════════════════════════════════════ */}
+      <section id="how-it-works" style={{ background:C.dark, padding:'160px 0' }}>
+        <div style={{ maxWidth:'80rem', margin:'0 auto', padding:'0 32px' }}>
 
-          {/* Heading */}
           <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={baseTransition}
-            className="text-center mb-16"
+            initial={{ opacity:0, y:24 }}
+            whileInView={{ opacity:1, y:0 }}
+            viewport={{ once:true }}
+            transition={{ duration:0.6 }}
+            style={{ textAlign:'center', marginBottom:'80px' }}
           >
-            <h2 className="font-display font-bold text-4xl lg:text-5xl text-neutral-900 mb-4 tracking-tight">
-              Built for everyone in your institution
+            <p style={{ fontSize:'11px', fontWeight:600, letterSpacing:'0.12em', textTransform:'uppercase', color:C.gold, marginBottom:'16px' }}>
+              How It Works
+            </p>
+            <h2 style={{
+              fontFamily:'Sora, system-ui, sans-serif',
+              fontSize:'clamp(2rem, 5vw, 3.5rem)',
+              fontWeight:700, color:C.text,
+              letterSpacing:'-0.02em', marginBottom:'16px',
+            }}>
+              Three steps. Infinite growth.
             </h2>
-            <p className="text-neutral-500 text-lg max-w-xl mx-auto">
-              One platform, three powerful roles — seamlessly connected.
+            <p style={{ color:C.muted, fontSize:'16px', maxWidth:'28rem', margin:'0 auto' }}>
+              From diary entry to mentor response in under 24 hours.
             </p>
           </motion.div>
 
-          {/* Role cards */}
-          <motion.div
-            variants={staggerContainer}
-            initial="hidden"
-            whileInView="visible"
-            viewport={{ once: true, margin: '-80px' }}
-            className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-20"
-          >
-            {roleCards.map(({ icon, title, colorKey, points }) => {
-              const c = roleColors[colorKey]
-              return (
-                <motion.div
-                  key={title}
-                  variants={fadeUp}
-                  whileHover={shouldReduce ? {} : { y: -4, transition: { duration: 0.2 } }}
-                  whileFocus={shouldReduce ? {} : { y: -4 }}
-                  className={`glass-card p-8 border border-neutral-200 transition-all duration-250 ${c.hover}`}
-                  style={{ cursor: 'default' }}
-                  onMouseEnter={(e) => !shouldReduce && Object.assign(e.currentTarget.style, c.glow)}
-                  onMouseLeave={(e) => (e.currentTarget.style.boxShadow = '')}
-                >
-                  {/* Icon */}
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center mb-5 ${c.icon}`}>
-                    {icon}
-                  </div>
-                  {/* Title */}
-                  <h3 className="font-display font-semibold text-xl text-neutral-900 mb-4">{title}</h3>
-                  {/* Bullet points */}
-                  <ul className="space-y-2.5" role="list">
-                    {points.map((point) => (
-                      <li key={point} className="flex items-start gap-2.5 text-sm text-neutral-600">
-                        <CheckIcon />
-                        {point}
-                      </li>
-                    ))}
-                  </ul>
-                </motion.div>
-              )
-            })}
-          </motion.div>
-
-          {/* ── Final CTA block ─────────────────────────────────────────── */}
-          <motion.div
-            initial={{ opacity: 0, y: 28 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={baseTransition}
-            className="relative rounded-3xl p-12 lg:p-16 text-center overflow-hidden"
-            style={{ background: 'linear-gradient(135deg, #312E81 0%, #4F46E5 55%, #6366F1 100%)' }}
-          >
-            {/* Decorative orbs inside CTA */}
-            <div aria-hidden className="absolute inset-0 pointer-events-none overflow-hidden rounded-3xl">
-              <div
-                className="absolute -top-20 -right-20 w-72 h-72 rounded-full"
-                style={{ background: 'rgba(245,158,11,0.18)', filter: 'blur(48px)' }}
-              />
-              <div
-                className="absolute -bottom-16 -left-16 w-56 h-56 rounded-full"
-                style={{ background: 'rgba(99,102,241,0.25)', filter: 'blur(40px)' }}
-              />
-            </div>
-
-            <div className="relative z-10">
-              <h2 className="font-display font-bold text-4xl lg:text-5xl text-white mb-4 leading-tight tracking-tight">
-                Start your growth journey today.
-              </h2>
-              <p className="text-primary-200 text-lg mb-10 max-w-lg mx-auto">
-                Join thousands of students and mentors building meaningful academic relationships.
-              </p>
-              <Link to="/register" className="btn btn-accent btn-xl inline-flex gap-2">
-                Get started today
-                <svg viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5" aria-hidden>
-                  <path fillRule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" clipRule="evenodd" />
-                </svg>
-              </Link>
-            </div>
-          </motion.div>
+          <div style={{
+            display:'flex', gap:'24px', justifyContent:'center',
+            flexWrap:'wrap',
+          }}>
+            {HOW_STEPS.map((s, i) => (
+              <motion.div
+                key={s.n}
+                transition={{ delay: i * 0.2 }}
+              >
+                <FlipCard step={s} skip={skip} />
+              </motion.div>
+            ))}
+          </div>
         </div>
       </section>
 
-      {/* ── Footer ───────────────────────────────────────────────────────── */}
-      <footer className="py-10 border-t border-neutral-200">
-        <div className="max-w-6xl mx-auto px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
-          {/* Logo */}
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-md bg-gradient-to-br from-primary-600 to-primary-800 flex items-center justify-center">
-              <GraduationCapIcon />
+      {/* ════════════════════════════════════════════════════════════════════
+          FEATURES — PINNED SCROLL SECTION
+      ════════════════════════════════════════════════════════════════════ */}
+      <FeaturesSection skip={skip} />
+
+      {/* ════════════════════════════════════════════════════════════════════
+          BENTO GRID — ROLE CARDS
+      ════════════════════════════════════════════════════════════════════ */}
+      <BentoGrid />
+
+      {/* ════════════════════════════════════════════════════════════════════
+          TESTIMONIALS — MARQUEE
+      ════════════════════════════════════════════════════════════════════ */}
+      <MarqueeSection />
+
+      {/* ════════════════════════════════════════════════════════════════════
+          FINAL CTA — FULL SCREEN
+      ════════════════════════════════════════════════════════════════════ */}
+      <section style={{
+        minHeight:'100vh', background:C.void,
+        display:'flex', alignItems:'center', justifyContent:'center',
+        position:'relative', overflow:'hidden',
+      }}>
+        {!isMobile && !skip && (
+          <Suspense fallback={null}>
+            <ParticleField style={{ position:'absolute', inset:0, pointerEvents:'none', zIndex:0, opacity:0.7 }} />
+          </Suspense>
+        )}
+        {/* Orb */}
+        <div aria-hidden style={{
+          position:'absolute', top:'50%', left:'50%',
+          transform:'translate(-50%, -50%)',
+          width:'600px', height:'600px', borderRadius:'50%',
+          background:'radial-gradient(circle, rgba(232,184,75,0.05) 0%, transparent 70%)',
+          pointerEvents:'none', zIndex:1,
+        }} />
+        <FinalCTAContent skip={skip} />
+      </section>
+
+      {/* ════════════════════════════════════════════════════════════════════
+          FOOTER
+      ════════════════════════════════════════════════════════════════════ */}
+      <footer style={{
+        background:   C.void,
+        borderTop:    `1px solid rgba(255,255,255,0.04)`,
+        padding:      '64px 0',
+      }}>
+        <div style={{
+          maxWidth:'80rem', margin:'0 auto', padding:'0 32px',
+          display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(200px, 1fr))',
+          gap:'40px', alignItems:'start',
+        }}>
+          {/* Brand */}
+          <div>
+            <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'16px' }}>
+              <div style={{
+                width:'32px', height:'32px', borderRadius:'8px',
+                background:C.void, border:`1px solid rgba(232,184,75,0.3)`,
+                display:'flex', alignItems:'center', justifyContent:'center',
+                fontSize:'12px', fontWeight:800, color:C.gold,
+                fontFamily:'Sora, system-ui, sans-serif',
+              }}>MD</div>
+              <span style={{ fontSize:'14px', fontWeight:600, fontFamily:'Sora, system-ui, sans-serif' }}>
+                <span style={{ color:'rgba(242,240,232,0.7)' }}>Mentoring</span>
+                <span style={{ color:C.gold }}>Diaries</span>
+              </span>
             </div>
-            <span className="font-display font-semibold text-neutral-800 text-sm">
-              Mentoring<span className="text-primary-600">Diaries</span>
-            </span>
+            <p style={{ fontSize:'13px', color:C.subtle, lineHeight:1.65, maxWidth:'220px' }}>
+              AI-powered mentoring for educational institutions.
+            </p>
+            <p style={{ fontSize:'12px', color:'rgba(242,240,232,0.2)', marginTop:'16px' }}>
+              © 2025 MentoringDiaries. Built for students.
+            </p>
           </div>
 
-          {/* Nav links */}
-          <nav className="flex items-center gap-6" aria-label="Footer navigation">
-            <Link to="/login" className="text-sm text-neutral-500 hover:text-neutral-900 transition-colors">
-              Sign In
-            </Link>
-            <Link to="/register" className="text-sm text-neutral-500 hover:text-neutral-900 transition-colors">
-              Register
-            </Link>
-          </nav>
+          {/* Links */}
+          <div>
+            <p style={{ fontSize:'12px', fontWeight:600, color:C.subtle, letterSpacing:'0.1em', textTransform:'uppercase', marginBottom:'20px' }}>
+              Platform
+            </p>
+            <div style={{ display:'flex', flexDirection:'column', gap:'12px' }}>
+              {[
+                { label:'Sign In',   to:'/login'    },
+                { label:'Register',  to:'/register' },
+                { label:'Features',  to:'/'         },
+                { label:'For Teams', to:'/'         },
+              ].map(({ label, to }) => (
+                <Link
+                  key={label}
+                  to={to}
+                  className="nav-underline"
+                  data-cursor="hover"
+                  style={{ fontSize:'14px', color:C.subtle, textDecoration:'none', display:'inline-block' }}
+                  onMouseEnter={e => e.currentTarget.style.color = C.text}
+                  onMouseLeave={e => e.currentTarget.style.color = C.subtle}
+                >
+                  {label}
+                </Link>
+              ))}
+            </div>
+          </div>
 
-          {/* Tagline */}
-          <p className="text-xs text-neutral-400 text-center sm:text-right">
-            Guided growth. Every day.
-          </p>
+          {/* CTA */}
+          <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-start', gap:'16px' }}>
+            <p style={{ fontSize:'14px', color:C.muted }}>
+              Ready to get started?
+            </p>
+            <Link
+              to="/register"
+              className="get-started-btn"
+              data-cursor="button"
+              style={{
+                display:'inline-flex', padding:'12px 24px',
+                border:`1px solid rgba(232,184,75,0.3)`,
+                borderRadius:'12px', fontSize:'14px', fontWeight:500,
+              }}
+            >
+              <span style={{ color:C.text }}>Get started →</span>
+            </Link>
+          </div>
         </div>
       </footer>
 
     </div>
   )
 }
+
+// ── Features section (inline) ─────────────────────────────────────────────────
+const FEATURES = [
+  {
+    n:'01', title:'AI Risk Detection',
+    desc:'Groq-powered analysis spots burnout, disengagement, and academic risk before they escalate.',
+    visual: <RiskChart />,
+  },
+  {
+    n:'02', title:'Weekly Diary System',
+    desc:'Students reflect in minutes. Free text, mood tracking, and structured prompts — all in one.',
+    visual: <DiaryMockup />,
+  },
+  {
+    n:'03', title:'Mentor Dashboard',
+    desc:'AI briefs, risk flags, and sentiment timelines — everything a mentor needs before a session.',
+    visual: <MentorMockup />,
+  },
+  {
+    n:'04', title:'Institution Analytics',
+    desc:'Cohort-wide risk distributions, engagement trends, and exportable audit reports.',
+    visual: <AnalyticsMockup />,
+  },
+]
+
+function RiskChart() {
+  const bars = [0.4, 0.55, 0.7, 0.5, 0.8, 0.65, 0.9]
+  return (
+    <div style={{ display:'flex', alignItems:'flex-end', gap:'8px', height:'80px', padding:'0 8px' }}>
+      {bars.map((h, i) => (
+        <motion.div
+          key={i}
+          initial={{ height:0 }}
+          whileInView={{ height:`${h*80}px` }}
+          viewport={{ once:true }}
+          transition={{ duration:0.6, delay: i*0.08, ease:[0.25,0.1,0.25,1] }}
+          style={{
+            flex:1, borderRadius:'4px 4px 0 0',
+            background: h > 0.75 ? C.gold : h > 0.5 ? 'rgba(232,184,75,0.5)' : 'rgba(232,184,75,0.25)',
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+function DiaryMockup() {
+  return (
+    <div style={{ padding:'0 8px' }}>
+      {[1, 0.75, 0.9, 0.5].map((w,i) => (
+        <motion.div
+          key={i}
+          initial={{ opacity:0, x:-20 }}
+          whileInView={{ opacity:1, x:0 }}
+          viewport={{ once:true }}
+          transition={{ delay: i*0.1 }}
+          style={{
+            height:'8px', borderRadius:'4px',
+            background:`rgba(232,184,75,${w * 0.3})`,
+            width:`${w*100}%`, marginBottom:'8px',
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+function MentorMockup() {
+  return (
+    <div style={{ display:'flex', flexDirection:'column', gap:'6px', padding:'0 8px' }}>
+      {[{ label:'Sentiment', v:80, c:C.gold },{ label:'Engagement', v:65, c:'#F5A623' },{ label:'Risk', v:30, c:C.green }].map(({ label, v, c }) => (
+        <div key={label}>
+          <div style={{ display:'flex', justifyContent:'space-between', marginBottom:'3px' }}>
+            <span style={{ fontSize:'10px', color:C.subtle }}>{label}</span>
+            <span style={{ fontSize:'10px', color:C.muted }}>{v}%</span>
+          </div>
+          <div style={{ height:'4px', borderRadius:'9999px', background:'rgba(255,255,255,0.06)' }}>
+            <motion.div
+              initial={{ width:0 }}
+              whileInView={{ width:`${v}%` }}
+              viewport={{ once:true }}
+              transition={{ duration:0.8 }}
+              style={{ height:'100%', borderRadius:'9999px', background:c }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+function AnalyticsMockup() {
+  const data = [0.3, 0.6, 0.45, 0.8, 0.55, 0.7, 0.9, 0.5]
+  return (
+    <div style={{ display:'flex', alignItems:'flex-end', gap:'5px', height:'60px', padding:'0 8px' }}>
+      {data.map((h, i) => (
+        <motion.div
+          key={i}
+          initial={{ scaleY:0 }}
+          whileInView={{ scaleY:1 }}
+          viewport={{ once:true }}
+          transition={{ delay: i*0.06 }}
+          style={{
+            flex:1, height:`${h*60}px`, borderRadius:'3px 3px 0 0',
+            background:`rgba(232,184,75,${0.2 + h*0.5})`,
+            transformOrigin:'bottom',
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
+function FeaturesSection({ skip }) {
+  return (
+    <section style={{ background:C.void, padding:'160px 0' }}>
+      <div style={{ maxWidth:'80rem', margin:'0 auto', padding:'0 32px' }}>
+
+        <motion.div
+          initial={{ opacity:0, y:24 }}
+          whileInView={{ opacity:1, y:0 }}
+          viewport={{ once:true }}
+          transition={{ duration:0.6 }}
+          style={{ textAlign:'center', marginBottom:'80px' }}
+        >
+          <p style={{ fontSize:'11px', fontWeight:600, letterSpacing:'0.12em', textTransform:'uppercase', color:C.gold, marginBottom:'16px' }}>
+            Everything You Need
+          </p>
+          <h2 style={{
+            fontFamily:'Sora, system-ui, sans-serif',
+            fontSize:'clamp(2rem, 5vw, 3.5rem)',
+            fontWeight:700, color:C.text,
+            letterSpacing:'-0.02em',
+          }}>
+            Everything your institution needs.
+          </h2>
+        </motion.div>
+
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(300px, 1fr))', gap:'24px' }}>
+          {FEATURES.map(({ n, title, desc, visual }, i) => (
+            <motion.div
+              key={n}
+              initial={{ opacity:0, y:60 }}
+              whileInView={{ opacity:1, y:0 }}
+              viewport={{ once:true, margin:'-60px' }}
+              transition={{ duration:0.7, delay: i * 0.1, ease:[0.25, 0.1, 0.25, 1] }}
+              style={{
+                background:   C.surface,
+                border:       `1px solid ${C.border}`,
+                borderRadius: '24px', padding:'36px',
+                position:     'relative', overflow:'hidden',
+                transition:   'border-color 0.3s, box-shadow 0.3s',
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.borderColor = 'rgba(232,184,75,0.2)'
+                e.currentTarget.style.boxShadow   = '0 20px 60px rgba(0,0,0,0.4)'
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.borderColor = C.border
+                e.currentTarget.style.boxShadow   = 'none'
+              }}
+              data-cursor="hover"
+            >
+              <span style={{
+                position:'absolute', top:'20px', right:'24px',
+                fontSize:'72px', fontWeight:900,
+                color:'rgba(255,255,255,0.025)',
+                lineHeight:1, fontFamily:'Sora, system-ui, sans-serif',
+                userSelect:'none',
+              }}>{n}</span>
+
+              <div style={{ marginBottom:'20px' }}>{visual}</div>
+
+              <h3 style={{
+                fontFamily:'Sora, system-ui, sans-serif',
+                fontSize:'22px', fontWeight:700, color:C.text,
+                marginBottom:'10px',
+              }}>{title}</h3>
+              <p style={{ fontSize:'14px', color:C.muted, lineHeight:1.65 }}>{desc}</p>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+const C_feat = C  // alias for components defined after Landing
