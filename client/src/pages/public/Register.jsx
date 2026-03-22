@@ -80,11 +80,11 @@ function GoldButton({ state, children, onClick, type = 'button', disabled: force
   const isSuccess = state === 'success'
   const isOff     = isLoading || forceDisable
 
-  const bg = isSuccess
-    ? 'linear-gradient(135deg, #10B981, #34D399)'
+  const bgStyle = isSuccess
+    ? { backgroundImage: 'linear-gradient(135deg, #10B981, #34D399)', backgroundSize: '200% auto' }
     : isOff
-      ? 'rgba(232,184,75,0.65)'
-      : 'linear-gradient(135deg, #E8B84B 0%, #F5D380 40%, #E8B84B 80%)'
+      ? { backgroundColor: 'rgba(232,184,75,0.65)' }
+      : { backgroundImage: 'linear-gradient(135deg, #E8B84B 0%, #F5D380 40%, #E8B84B 80%)', backgroundSize: '200% auto' }
 
   return (
     <>
@@ -102,7 +102,7 @@ function GoldButton({ state, children, onClick, type = 'button', disabled: force
         transition={{ type: 'spring', stiffness: 400, damping: 30 }}
         style={{
           width:'100%', padding:'16px', borderRadius:'18px',
-          background: bg, backgroundSize:'200% auto',
+          ...bgStyle,
           animation: hovered && !isOff && !reduced ? 'btn-shimmer 1.2s linear infinite' : 'none',
           color:'#06060A', fontWeight:700, fontSize:'15px',
           border:'none', cursor: isOff ? 'not-allowed' : 'pointer',

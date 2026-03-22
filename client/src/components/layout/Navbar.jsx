@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
 import { useLocation } from 'react-router-dom'
-import { Bell } from 'lucide-react'
+import { Bell, Menu } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useNotificationStore } from '../../store/notificationStore'
 import { useAuthStore } from '../../store/authStore'
+import { useUIStore } from '../../store/uiStore'
 
 const breadcrumbMap = {
     '/dashboard': 'Dashboard',
@@ -35,6 +36,7 @@ export default function Navbar() {
     const location = useLocation()
     const { user } = useAuthStore()
     const { notifications, unreadCount, markAllRead, markRead } = useNotificationStore()
+    const { toggleSidebar } = useUIStore()
     const [showNotifs, setShowNotifs] = useState(false)
     const notifRef = useRef(null)
 
@@ -57,14 +59,23 @@ export default function Navbar() {
                 borderBottom: '1px solid rgb(var(--border-color))',
             }}
         >
-            {/* Breadcrumb */}
-            <div>
-                <h1 className="text-base font-semibold" style={{ color: 'rgb(var(--text-primary))' }}>
-                    {title}
-                </h1>
-                <p className="text-xs" style={{ color: 'rgb(var(--text-muted))' }}>
-                    {new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-                </p>
+            {/* Left: hamburger (mobile) + breadcrumb */}
+            <div className="flex items-center gap-3">
+                <button
+                    className="lg:hidden p-2 rounded-xl btn-ghost"
+                    onClick={toggleSidebar}
+                    aria-label="Toggle menu"
+                >
+                    <Menu size={18} />
+                </button>
+                <div>
+                    <h1 className="text-base font-semibold" style={{ color: 'rgb(var(--text-primary))' }}>
+                        {title}
+                    </h1>
+                    <p className="text-xs" style={{ color: 'rgb(var(--text-muted))' }}>
+                        {new Date().toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                    </p>
+                </div>
             </div>
 
             {/* Right: Notifications */}

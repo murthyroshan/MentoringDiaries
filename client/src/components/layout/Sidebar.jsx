@@ -1,5 +1,6 @@
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useEffect, useState } from 'react'
 import {
     LayoutDashboard, BookOpen, PlusCircle, BookMarked,
     Users, Flag, BarChart3, ShieldAlert, Settings,
@@ -36,8 +37,22 @@ const navByRole = { student: studentNav, mentor: mentorNav, admin: adminNav }
 
 export default function Sidebar() {
     const { user, logout } = useAuthStore()
-    const { sidebarOpen, toggleSidebar, darkMode, toggleDarkMode } = useUIStore()
+    const { sidebarOpen, toggleSidebar, setSidebarOpen, darkMode, toggleDarkMode } = useUIStore()
     const navigate = useNavigate()
+    const location = useLocation()
+    const [isMobile, setIsMobile] = useState(() => window.innerWidth < 1024)
+
+    // Track viewport width
+    useEffect(() => {
+        const check = () => setIsMobile(window.innerWidth < 1024)
+        window.addEventListener('resize', check)
+        return () => window.removeEventListener('resize', check)
+    }, [])
+
+    // Close sidebar on route change (mobile only)
+    useEffect(() => {
+        if (isMobile) setSidebarOpen(false)
+    }, [location.pathname, isMobile, setSidebarOpen])
 
     const navItems = navByRole[user?.role] || []
 
@@ -46,14 +61,38 @@ export default function Sidebar() {
         navigate('/login')
     }
 
+    const handleNavClick = () => {
+        if (isMobile) setSidebarOpen(false)
+    }
+
     const roleLabel = { student: 'Student', mentor: 'Mentor', admin: 'Administrator' }
     const roleColor = { student: 'text-violet-400', mentor: 'text-indigo-400', admin: 'text-pink-400' }
 
     return (
+        <>
+            {/* Mobile overlay backdrop */}
+            <AnimatePresence>
+                {isMobile && sidebarOpen && (
+                    <motion.div
+                        key="sidebar-overlay"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 0.2 }}
+                        className="fixed inset-0 bg-black/60 z-40 lg:hidden"
+                        onClick={() => setSidebarOpen(false)}
+                    />
+                )}
+            </AnimatePresence>
+
         <motion.aside
-            animate={{ width: sidebarOpen ? 256 : 72 }}
-            transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
-            className="flex flex-col h-full shrink-0 relative z-20 overflow-hidden"
+            initial={false}
+            animate={isMobile
+                ? { x: sidebarOpen ? 0 : -280, width: 256 }
+                : { x: 0, width: sidebarOpen ? 256 : 72 }
+            }
+            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+            className="fixed lg:relative inset-y-0 left-0 h-screen lg:h-full flex-shrink-0 z-50 lg:z-20 flex flex-col overflow-hidden"
             style={{
                 background: 'rgb(var(--bg-card))',
                 borderRight: '1px solid rgb(var(--border-color))',
@@ -129,6 +168,7 @@ export default function Sidebar() {
                         to={item.to}
                         end={item.to === '/dashboard' || item.to === '/mentor' || item.to === '/admin'}
                         className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
+                        onClick={handleNavClick}
                     >
                         <item.icon size={18} className="shrink-0" />
                         <AnimatePresence>
@@ -175,5 +215,6 @@ export default function Sidebar() {
                 </button>
             </div>
         </motion.aside>
+        </>
     )
 }

@@ -8,6 +8,7 @@ import { useUIStore } from './store/uiStore'
 
 // Layout
 import DashboardLayout from './components/layout/DashboardLayout'
+import StudentLayout from './components/layout/StudentLayout'
 
 // Public Pages
 import LandingPage from './pages/public/Landing'
@@ -72,7 +73,7 @@ function AnimatedRoutes() {
         <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
 
         {/* Student */}
-        <Route element={<ProtectedRoute allowedRoles={['student']}><DashboardLayout /></ProtectedRoute>}>
+        <Route element={<ProtectedRoute allowedRoles={['student']}><StudentLayout /></ProtectedRoute>}>
           <Route path="/dashboard" element={<StudentDashboard />} />
           <Route path="/submit" element={<SubmitEntry />} />
           <Route path="/my-entries" element={<MyEntries />} />
@@ -128,8 +129,11 @@ export default function App() {
   // silentRefresh must wait until Zustand has finished rehydrating from
   // localStorage, otherwise isAuthenticated is still false and we fire an
   // unnecessary /auth/me request even for already-logged-in users.
+  // Note: no pathname guard — the GET /api/auth/me call also ensures the
+  // CSRF cookie is set before any mutating request (e.g. POST /auth/login).
+  // The hasCheckedAuth guard inside silentRefresh prevents duplicate calls.
   useEffect(() => {
-    if (_hasHydrated && window.location.pathname !== '/') {
+    if (_hasHydrated) {
       silentRefresh()
     }
   }, [_hasHydrated])

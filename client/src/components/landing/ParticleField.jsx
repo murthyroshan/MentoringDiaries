@@ -118,7 +118,7 @@ export default function ParticleField({ className = '', style = {} }) {
       className={className}
       dpr={[1, 2]}
       camera={{ position: [0, 0, 10], fov: 75 }}
-      gl={{ antialias: false, alpha: true }}
+      gl={{ antialias: false, alpha: true, powerPreference: 'high-performance' }}
       style={{ background: 'transparent', ...style }}
     >
       <Particles mouseRef={mouseRef} />

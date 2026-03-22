@@ -125,7 +125,7 @@ export default function AuthParticles() {
     <Canvas
       dpr={[1, Math.min(window.devicePixelRatio, 2)]}
       camera={{ position: [0, 0, 10], fov: 75 }}
-      gl={{ antialias: false, alpha: true }}
+      gl={{ antialias: false, alpha: true, powerPreference: 'high-performance' }}
       style={{ position: 'absolute', inset: 0, background: 'transparent' }}
     >
       <Particles mouseRef={mouseRef} />

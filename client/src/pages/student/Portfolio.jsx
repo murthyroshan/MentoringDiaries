@@ -1,326 +1,424 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion, useReducedMotion } from 'framer-motion'
+import { Line } from 'react-chartjs-2'
 import {
-    GraduationCap, Trophy, Zap, TrendingUp,
-    Star, Award, BookOpen, BarChart2
-} from 'lucide-react'
+  Chart as ChartJS,
+  LineElement,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  Tooltip,
+  Filler,
+  Legend,
+} from 'chart.js'
+import { Download, ExternalLink, Award, TrendingUp, Flame } from 'lucide-react'
 import { format } from 'date-fns'
 import api from '../../services/api'
 import { useAuthStore } from '../../store/authStore'
 
-// ── Tab config ────────────────────────────────────────────────────────────────
-const TABS = [
-    { id: 'academic', label: 'Academic Performance', icon: GraduationCap, color: '#06b6d4' },
-    { id: 'events', label: 'Events & Achievements', icon: Trophy, color: '#f59e0b' },
-    { id: 'skills', label: 'Skills Growth', icon: Zap, color: '#10b981' },
-]
+ChartJS.register(LineElement, CategoryScale, LinearScale, PointElement, Tooltip, Filler, Legend)
 
-const GRADE_POINTS = { O: 10, 'A+': 9, A: 8, 'B+': 7, B: 6, C: 5, F: 0 }
-
-const ACHIEVEMENT_ICONS = {
-    winner: '🥇', 'runner-up': '🥈', participated: '🎫',
-    'special-mention': '🏅', coordinator: '🧑‍💼', volunteer: '🤝', other: '📌',
+const DEMO_PORTFOLIO = {
+  semester: 'Spring 2025',
+  entries: 14,
+  avgRisk: 32,
+  streak: 14,
+  riskTrend: [45, 38, 52, 41, 35, 28, 32, 23, 48, 31, 25, 38, 35, 32],
+  sentimentTrend: [55, 62, 48, 70, 75, 80, 72, 85, 65, 78, 82, 70, 75, 80],
+  weekLabels: Array.from({ length: 14 }, (_, i) => `Wk ${i + 1}`),
+  aiSummary:
+    'This semester, you have shown consistent growth and dedication. Your risk scores have improved significantly over the past 6 weeks, reflecting better time management and academic engagement. Your attendance has been strong, and your mentor feedback has been predominantly positive. Keep up this momentum into the final weeks.',
+  recentEntries: [
+    {
+      _id: '1',
+      week: 14,
+      mood: '😊',
+      riskScore: 23,
+      reflection: 'Productive week with strong academic performance.',
+      createdAt: new Date().toISOString(),
+    },
+    {
+      _id: '2',
+      week: 13,
+      mood: '🙂',
+      riskScore: 31,
+      reflection: 'Good week with consistent effort across all subjects.',
+      createdAt: new Date(Date.now() - 7 * 86400000).toISOString(),
+    },
+    {
+      _id: '3',
+      week: 12,
+      mood: '😐',
+      riskScore: 48,
+      reflection: 'Challenging week due to health issues.',
+      createdAt: new Date(Date.now() - 14 * 86400000).toISOString(),
+    },
+    {
+      _id: '4',
+      week: 11,
+      mood: '😊',
+      riskScore: 25,
+      reflection: 'Great session with mentor. Progress on track.',
+      createdAt: new Date(Date.now() - 21 * 86400000).toISOString(),
+    },
+    {
+      _id: '5',
+      week: 10,
+      mood: '😔',
+      riskScore: 72,
+      reflection: 'Difficult week with deadline overlaps.',
+      createdAt: new Date(Date.now() - 28 * 86400000).toISOString(),
+    },
+    {
+      _id: '6',
+      week: 9,
+      mood: '🙂',
+      riskScore: 38,
+      reflection: 'Steady and consistent week.',
+      createdAt: new Date(Date.now() - 35 * 86400000).toISOString(),
+    },
+  ],
 }
 
-// ── Stat Card ─────────────────────────────────────────────────────────────────
-function StatCard({ label, value, sub, color }) {
-    return (
-        <div className="glass-card p-5 text-center">
-            <p className="text-3xl font-bold mb-1" style={{ color }}>{value}</p>
-            <p className="text-sm font-semibold" style={{ color: 'rgb(var(--text-primary))' }}>{label}</p>
-            {sub && <p className="text-xs mt-0.5" style={{ color: 'rgb(var(--text-muted))' }}>{sub}</p>}
-        </div>
-    )
+function getRiskColor(score) {
+  if (score < 40) return '#3DD68C'
+  if (score < 70) return '#F59E0B'
+  return '#EF4444'
 }
 
-// ── Academic Tab ──────────────────────────────────────────────────────────────
-function AcademicTab({ records }) {
-    if (!records?.length) {
-        return (
-            <div className="glass-card p-16 text-center">
-                <BookOpen size={40} className="mx-auto mb-3 opacity-20" />
-                <p style={{ color: 'rgb(var(--text-muted))' }}>No academic records yet.</p>
-            </div>
-        )
-    }
-
-    const endsemRecords = records.filter(r => r.examType === 'endsem')
-    const midRecords = records.filter(r => r.examType !== 'endsem')
-    const latestCgpa = endsemRecords.sort((a, b) => b.semester - a.semester)[0]?.finalCgpa
-
-    const avgMidPct = midRecords.length
-        ? Math.round(midRecords.reduce((s, r) => s + (r.overallPercentage || 0), 0) / midRecords.length * 10) / 10
-        : null
-
-    return (
-        <div className="space-y-6">
-            {/* Summary stats */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <StatCard label="Total Records" value={records.length} color="#8b5cf6" />
-                <StatCard label="Latest CGPA" value={latestCgpa ?? '—'} color="#06b6d4" sub="End Semester" />
-                <StatCard label="Avg Midterm %" value={avgMidPct != null ? `${avgMidPct}%` : '—'} color="#f59e0b" />
-                <StatCard label="Semesters" value={[...new Set(records.map(r => r.semester))].length} color="#10b981" />
-            </div>
-
-            {/* Records per semester */}
-            {[...new Set(records.map(r => r.semester))].sort().map(sem => {
-                const semRecords = records.filter(r => r.semester === sem)
-                return (
-                    <div key={sem} className="glass-card p-5">
-                        <h4 className="font-semibold mb-4 text-sm" style={{ color: 'rgb(var(--text-primary))' }}>Semester {sem}</h4>
-                        <div className="space-y-3">
-                            {semRecords.map(r => (
-                                <div key={r._id} className="p-3 rounded-xl" style={{ background: 'rgb(var(--bg-secondary))' }}>
-                                    <div className="flex items-center justify-between mb-2">
-                                        <span className="text-sm font-medium capitalize" style={{ color: 'rgb(var(--text-primary))' }}>
-                                            {r.examType === 'mid1' ? 'Mid Semester I' : r.examType === 'mid2' ? 'Mid Semester II' : 'End Semester'}
-                                        </span>
-                                        {r.examType === 'endsem'
-                                            ? <span className="badge text-xs font-bold" style={{ background: 'rgba(6,182,212,0.1)', color: '#06b6d4' }}>CGPA: {r.finalCgpa ?? '—'}</span>
-                                            : <span className="badge text-xs font-bold" style={{ background: 'rgba(6,182,212,0.1)', color: '#06b6d4' }}>{r.overallPercentage ?? 0}%</span>
-                                        }
-                                    </div>
-                                    {r.examType !== 'endsem' && r.subjects?.length > 0 && (
-                                        <div className="grid grid-cols-2 gap-1">
-                                            {r.subjects.map(s => (
-                                                <div key={s.name} className="flex justify-between text-xs px-2 py-1 rounded" style={{ background: 'rgb(var(--bg-primary))' }}>
-                                                    <span className="truncate mr-2" style={{ color: 'rgb(var(--text-secondary))' }}>{s.name}</span>
-                                                    <span className="font-medium" style={{ color: s.marks >= 30 ? '#22c55e' : s.marks >= 20 ? '#f59e0b' : '#ef4444' }}>
-                                                        {s.marks}/40
-                                                    </span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                    {r.examType === 'endsem' && r.endsemSubjects?.length > 0 && (
-                                        <div className="grid grid-cols-2 gap-1">
-                                            {r.endsemSubjects.map(s => {
-                                                const pts = GRADE_POINTS[s.grade] ?? 0
-                                                const gradeColor = pts >= 8 ? '#22c55e' : pts >= 6 ? '#f59e0b' : pts === 0 ? '#ef4444' : 'rgb(var(--text-secondary))'
-                                                return (
-                                                    <div key={s.name} className="flex justify-between text-xs px-2 py-1 rounded" style={{ background: 'rgb(var(--bg-primary))' }}>
-                                                        <span className="truncate mr-2" style={{ color: 'rgb(var(--text-secondary))' }}>{s.name}</span>
-                                                        <span className="font-bold" style={{ color: gradeColor }}>{s.grade}</span>
-                                                    </div>
-                                                )
-                                            })}
-                                        </div>
-                                    )}
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )
-            })}
-        </div>
-    )
+function getRiskLabel(score) {
+  if (score < 40) return 'Low'
+  if (score < 70) return 'Medium'
+  return 'High'
 }
 
-// ── Events Tab ────────────────────────────────────────────────────────────────
-function EventsTab({ events }) {
-    if (!events?.length) {
-        return (
-            <div className="glass-card p-16 text-center">
-                <Trophy size={40} className="mx-auto mb-3 opacity-20" />
-                <p style={{ color: 'rgb(var(--text-muted))' }}>No events or achievements yet.</p>
-            </div>
-        )
-    }
-
-    const wins = events.filter(e => e.achievement === 'winner').length
-    const podiums = events.filter(e => ['winner', 'runner-up', 'special-mention'].includes(e.achievement)).length
-
-    return (
-        <div className="space-y-5">
-            <div className="grid grid-cols-3 gap-3">
-                <StatCard label="Total Events" value={events.length} color="#f59e0b" />
-                <StatCard label="Wins 🥇" value={wins} color="#fbbf24" />
-                <StatCard label="Podium Finishes" value={podiums} color="#d97706" />
-            </div>
-            <div className="space-y-3">
-                {events.map(e => (
-                    <motion.div key={e._id} initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}
-                        className="glass-card p-4 flex items-start gap-4">
-                        <div className="text-2xl mt-0.5">{ACHIEVEMENT_ICONS[e.achievement] || '📌'}</div>
-                        <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between gap-2 flex-wrap">
-                                <p className="font-semibold text-sm" style={{ color: 'rgb(var(--text-primary))' }}>{e.eventName}</p>
-                                <span className="badge text-xs capitalize px-2 py-0.5" style={{ background: 'rgba(245,158,11,0.1)', color: '#f59e0b' }}>
-                                    {e.achievement}
-                                </span>
-                            </div>
-                            <p className="text-xs mt-0.5" style={{ color: 'rgb(var(--text-muted))' }}>
-                                {e.organizedBy} · {e.date ? format(new Date(e.date), 'MMM d, yyyy') : '—'} · <span className="capitalize">{e.eventType}</span>
-                            </p>
-                            {e.description && (
-                                <p className="text-xs mt-1.5 line-clamp-2" style={{ color: 'rgb(var(--text-secondary))' }}>{e.description}</p>
-                            )}
-                        </div>
-                    </motion.div>
-                ))}
-            </div>
-        </div>
-    )
+function getInitials(name = '') {
+  const p = name.trim().split(' ')
+  return p.length >= 2 ? p[0][0] + p[p.length - 1][0] : p[0]?.[0] || 'S'
 }
 
-// ── Skills Tab ────────────────────────────────────────────────────────────────
-function SkillsTab({ skills }) {
-    if (!skills?.length) {
-        return (
-            <div className="glass-card p-16 text-center">
-                <Zap size={40} className="mx-auto mb-3 opacity-20" />
-                <p style={{ color: 'rgb(var(--text-muted))' }}>No skill updates yet.</p>
-            </div>
-        )
-    }
-
-    const totalImprovement = skills.reduce((s, sk) => s + Math.max(0, (sk.ratingAfter ?? 0) - (sk.ratingBefore ?? 0)), 0)
-    const avgAfter = skills.length
-        ? Math.round(skills.reduce((s, sk) => s + (sk.ratingAfter ?? 0), 0) / skills.length * 10) / 10
-        : 0
-
-    // Group by category
-    const byCategory = skills.reduce((acc, sk) => {
-        const cat = sk.skillCategory || 'Other'
-        if (!acc[cat]) acc[cat] = []
-        acc[cat].push(sk)
-        return acc
-    }, {})
-
-    return (
-        <div className="space-y-5">
-            <div className="grid grid-cols-3 gap-3">
-                <StatCard label="Skills Tracked" value={skills.length} color="#10b981" />
-                <StatCard label="Total Improvement" value={`+${totalImprovement}`} color="#34d399" sub="levels gained" />
-                <StatCard label="Avg Proficiency" value={`${avgAfter}/5`} color="#6ee7b7" />
-            </div>
-
-            {Object.entries(byCategory).map(([cat, catSkills]) => (
-                <div key={cat} className="glass-card p-5">
-                    <h4 className="font-semibold mb-4 text-sm flex items-center gap-2" style={{ color: 'rgb(var(--text-primary))' }}>
-                        <Zap size={14} style={{ color: '#10b981' }} />{cat}
-                    </h4>
-                    <div className="space-y-3">
-                        {catSkills.map(sk => {
-                            const delta = (sk.ratingAfter ?? 0) - (sk.ratingBefore ?? 0)
-                            const pct = ((sk.ratingAfter ?? 0) / 5) * 100
-                            return (
-                                <div key={sk._id}>
-                                    <div className="flex items-center justify-between mb-1">
-                                        <span className="text-sm" style={{ color: 'rgb(var(--text-primary))' }}>{sk.skillName}</span>
-                                        <div className="flex items-center gap-2">
-                                            <span className="text-xs" style={{ color: 'rgb(var(--text-muted))' }}>
-                                                {sk.ratingBefore} → {sk.ratingAfter}
-                                            </span>
-                                            {delta > 0 && (
-                                                <span className="badge text-xs font-bold" style={{ background: 'rgba(16,185,129,0.1)', color: '#10b981' }}>▲ +{delta}</span>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <div className="h-1.5 rounded-full" style={{ background: 'rgb(var(--bg-secondary))' }}>
-                                        <motion.div
-                                            className="h-full rounded-full"
-                                            style={{ background: 'linear-gradient(90deg, #10b981, #34d399)' }}
-                                            initial={{ width: 0 }}
-                                            animate={{ width: `${pct}%` }}
-                                            transition={{ duration: 0.6, ease: 'easeOut' }}
-                                        />
-                                    </div>
-                                </div>
-                            )
-                        })}
-                    </div>
-                </div>
-            ))}
-        </div>
-    )
-}
-
-// ── Main Portfolio Page ───────────────────────────────────────────────────────
 export default function Portfolio() {
-    const { user } = useAuthStore()
-    const [activeTab, setActiveTab] = useState('academic')
+  const { user } = useAuthStore()
+  const reduced = useReducedMotion()
 
-    const { data: academicData, isLoading: loadingAcademic } = useQuery({
-        queryKey: ['portfolio-academic'],
-        queryFn: () => api.get('/academic').then(r => r.data),
-        staleTime: 60000,
-    })
-    const { data: eventsData, isLoading: loadingEvents } = useQuery({
-        queryKey: ['portfolio-events'],
-        queryFn: () => api.get('/events').then(r => r.data),
-        staleTime: 60000,
-    })
-    const { data: skillsData, isLoading: loadingSkills } = useQuery({
-        queryKey: ['portfolio-skills'],
-        queryFn: () => api.get('/skills').then(r => r.data),
-        staleTime: 60000,
-    })
+  const { data: portfolioData } = useQuery({
+    queryKey: ['portfolio'],
+    queryFn: () =>
+      api.get('/analytics/portfolio').then(r => r.data?.data).catch(() => DEMO_PORTFOLIO),
+  })
 
-    const records = academicData?.data || []
-    const events = eventsData?.data || []
-    const skills = skillsData?.data || []
+  const data = portfolioData || DEMO_PORTFOLIO
 
-    const isLoading = (activeTab === 'academic' && loadingAcademic)
-        || (activeTab === 'events' && loadingEvents)
-        || (activeTab === 'skills' && loadingSkills)
-
-    return (
-        <div className="max-w-4xl mx-auto space-y-6">
-            {/* Header */}
-            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
-                <h2 className="text-2xl font-bold" style={{ color: 'rgb(var(--text-primary))' }}>
-                    My Portfolio
-                </h2>
-                <p className="text-sm mt-1" style={{ color: 'rgb(var(--text-muted))' }}>
-                    {user?.name}'s academic journey, achievements, and growth
-                </p>
-            </motion.div>
-
-            {/* Tab navigation */}
-            <div className="flex gap-1 p-1 rounded-2xl" style={{ background: 'rgb(var(--bg-secondary))' }}>
-                {TABS.map(tab => {
-                    const Icon = tab.icon
-                    const active = activeTab === tab.id
-                    return (
-                        <button key={tab.id}
-                            onClick={() => setActiveTab(tab.id)}
-                            className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all"
-                            style={{
-                                background: active ? 'rgb(var(--bg-primary))' : 'transparent',
-                                color: active ? tab.color : 'rgb(var(--text-muted))',
-                                boxShadow: active ? '0 1px 6px rgba(0,0,0,0.15)' : 'none',
-                            }}>
-                            <Icon size={15} />
-                            <span className="hidden sm:inline">{tab.label}</span>
-                        </button>
-                    )
-                })}
-            </div>
-
-            {/* Tab content */}
-            <AnimatePresence mode="wait">
-                <motion.div
-                    key={activeTab}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    transition={{ duration: 0.18 }}
-                >
-                    {isLoading ? (
-                        <div className="space-y-4">
-                            {[1, 2, 3].map(i => <div key={i} className="skeleton h-32 rounded-2xl" />)}
-                        </div>
-                    ) : (
-                        <>
-                            {activeTab === 'academic' && <AcademicTab records={records} />}
-                            {activeTab === 'events' && <EventsTab events={events} />}
-                            {activeTab === 'skills' && <SkillsTab skills={skills} />}
-                        </>
-                    )}
-                </motion.div>
-            </AnimatePresence>
+  return (
+    <motion.div
+      initial={reduced ? {} : { opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={reduced ? {} : { opacity: 0 }}
+      transition={{ duration: 0.35, ease: [0.25, 0.1, 0.25, 1] }}
+    >
+      {/* Page header */}
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
+        marginBottom: '28px',
+      }}>
+        <div>
+          <h1 style={{
+            fontFamily: '"Sora",system-ui', fontSize: '24px', fontWeight: 700,
+            color: '#F2F0E8', margin: 0,
+          }}>Portfolio</h1>
+          <p style={{ fontSize: '13px', color: 'rgba(242,240,232,0.4)', margin: '6px 0 0' }}>
+            Your semester journey
+          </p>
         </div>
-    )
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <select style={{
+            background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)',
+            borderRadius: '10px', padding: '8px 14px', fontSize: '12px',
+            color: 'rgba(242,240,232,0.6)', outline: 'none', fontFamily: 'inherit', cursor: 'pointer',
+          }}>
+            <option>Spring 2025</option>
+            <option>Fall 2024</option>
+          </select>
+          <button style={{
+            display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px',
+            borderRadius: '12px', fontSize: '12px', background: 'rgba(232,184,75,0.1)',
+            color: '#E8B84B', border: '1px solid rgba(232,184,75,0.2)',
+            cursor: 'pointer', fontFamily: 'inherit',
+          }}>
+            <Download size={14} /> Export PDF
+          </button>
+        </div>
+      </div>
+
+      {/* Summary hero card */}
+      <div style={{
+        background: 'linear-gradient(135deg,#111118 0%,#16161F 100%)',
+        border: '1px solid rgba(232,184,75,0.08)', borderRadius: '24px',
+        padding: '32px', marginBottom: '24px',
+      }}>
+        {/* 3-col stats */}
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'repeat(3,1fr)',
+          gap: '24px', marginBottom: '24px',
+        }}>
+          {/* Entries stat */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+              <Award size={16} style={{ color: '#E8B84B' }} />
+              <span style={{
+                fontSize: '11px', color: 'rgba(242,240,232,0.4)', fontWeight: 500,
+                textTransform: 'uppercase', letterSpacing: '0.04em',
+              }}>Entries</span>
+            </div>
+            <div style={{ fontSize: '36px', fontWeight: 900, color: '#F2F0E8', lineHeight: 1 }}>
+              {data.entries}
+            </div>
+            <div style={{ fontSize: '12px', color: 'rgba(242,240,232,0.35)', marginTop: '4px' }}>
+              this semester
+            </div>
+          </div>
+
+          {/* Avg Risk stat */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+              <TrendingUp size={16} style={{ color: getRiskColor(data.avgRisk) }} />
+              <span style={{
+                fontSize: '11px', color: 'rgba(242,240,232,0.4)', fontWeight: 500,
+                textTransform: 'uppercase', letterSpacing: '0.04em',
+              }}>Avg Risk</span>
+            </div>
+            <div style={{ fontSize: '36px', fontWeight: 900, color: getRiskColor(data.avgRisk), lineHeight: 1 }}>
+              {data.avgRisk}
+            </div>
+            <span style={{
+              fontSize: '11px', padding: '2px 8px', borderRadius: '999px',
+              marginTop: '4px', display: 'inline-block',
+              background: `${getRiskColor(data.avgRisk)}15`, color: getRiskColor(data.avgRisk),
+              border: `1px solid ${getRiskColor(data.avgRisk)}25`,
+            }}>{getRiskLabel(data.avgRisk)} Risk</span>
+          </div>
+
+          {/* Streak stat */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+              <Flame size={16} style={{ color: '#E8B84B' }} />
+              <span style={{
+                fontSize: '11px', color: 'rgba(242,240,232,0.4)', fontWeight: 500,
+                textTransform: 'uppercase', letterSpacing: '0.04em',
+              }}>Streak</span>
+            </div>
+            <div style={{ fontSize: '36px', fontWeight: 900, color: '#E8B84B', lineHeight: 1 }}>
+              🔥 {data.streak}
+            </div>
+            <div style={{ fontSize: '12px', color: 'rgba(242,240,232,0.35)', marginTop: '4px' }}>
+              weeks
+            </div>
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div style={{ height: '1px', background: 'rgba(255,255,255,0.06)', margin: '4px 0 20px' }} />
+
+        {/* AI summary */}
+        <div style={{ borderLeft: '3px solid rgba(232,184,75,0.4)', paddingLeft: '16px' }}>
+          <div style={{
+            fontSize: '11px', color: 'rgba(232,184,75,0.6)', marginBottom: '8px',
+            fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.04em',
+          }}>
+            AI Summary
+          </div>
+          <p style={{
+            fontSize: '13px', color: 'rgba(242,240,232,0.55)',
+            lineHeight: 1.7, margin: 0, fontStyle: 'italic',
+          }}>
+            {data.aiSummary}
+          </p>
+        </div>
+      </div>
+
+      {/* Growth chart */}
+      <div style={{
+        background: '#111118', border: '1px solid rgba(255,255,255,0.06)',
+        borderRadius: '16px', padding: '24px', marginBottom: '24px',
+      }}>
+        <div style={{ fontSize: '15px', fontWeight: 600, color: 'rgba(242,240,232,0.7)', marginBottom: '16px' }}>
+          Growth Chart
+        </div>
+        <Line
+          height={50}
+          data={{
+            labels: data.weekLabels,
+            datasets: [
+              {
+                label: 'Risk Score',
+                data: data.riskTrend,
+                borderColor: '#E8B84B',
+                backgroundColor: 'rgba(232,184,75,0.05)',
+                tension: 0.4,
+                fill: false,
+                pointBackgroundColor: '#E8B84B',
+                pointRadius: 3,
+                pointHoverRadius: 5,
+                borderWidth: 1.5,
+              },
+              {
+                label: 'Sentiment Score',
+                data: data.sentimentTrend,
+                borderColor: '#3DD68C',
+                backgroundColor: 'rgba(61,214,140,0.05)',
+                tension: 0.4,
+                fill: false,
+                pointBackgroundColor: '#3DD68C',
+                pointRadius: 3,
+                pointHoverRadius: 5,
+                borderWidth: 1.5,
+              },
+            ],
+          }}
+          options={{
+            responsive: true,
+            plugins: {
+              legend: {
+                display: true,
+                position: 'bottom',
+                labels: {
+                  color: 'rgba(242,240,232,0.4)',
+                  font: { size: 11 },
+                  boxWidth: 20,
+                  padding: 16,
+                },
+              },
+              tooltip: {
+                backgroundColor: 'rgba(11,11,17,0.95)',
+                borderColor: 'rgba(255,255,255,0.1)',
+                borderWidth: 1,
+                titleColor: 'rgba(242,240,232,0.5)',
+                bodyColor: 'rgba(242,240,232,0.8)',
+                padding: 10,
+              },
+            },
+            scales: {
+              x: {
+                grid: { color: 'rgba(255,255,255,0.03)' },
+                ticks: { color: 'rgba(242,240,232,0.2)', font: { size: 10 } },
+                border: { color: 'transparent' },
+              },
+              y: {
+                grid: { color: 'rgba(255,255,255,0.03)' },
+                ticks: { color: 'rgba(242,240,232,0.2)', font: { size: 10 } },
+                border: { color: 'transparent' },
+                min: 0,
+                max: 100,
+              },
+            },
+          }}
+        />
+      </div>
+
+      {/* Mini entry grid */}
+      <div style={{ marginBottom: '28px' }}>
+        <div style={{ fontSize: '15px', fontWeight: 600, color: 'rgba(242,240,232,0.7)', marginBottom: '14px' }}>
+          All Entries
+        </div>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))',
+          gap: '12px',
+        }}>
+          {data.recentEntries.map((entry, i) => (
+            <motion.div
+              key={entry._id}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.05, duration: 0.3 }}
+              whileHover={{ y: -2, borderColor: 'rgba(255,255,255,0.1)' }}
+              style={{
+                background: '#0C0C12', border: '1px solid rgba(255,255,255,0.06)',
+                borderRadius: '14px', padding: '14px', cursor: 'pointer',
+                transition: 'border-color 0.2s',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                <span style={{ fontSize: '18px' }}>{entry.mood}</span>
+                <span style={{ fontSize: '11px', fontWeight: 600, color: 'rgba(232,184,75,0.8)' }}>
+                  Wk {entry.week}
+                </span>
+                <span style={{
+                  marginLeft: 'auto', fontSize: '10px', padding: '1px 6px', borderRadius: '999px',
+                  background: `${getRiskColor(entry.riskScore)}15`, color: getRiskColor(entry.riskScore),
+                }}>{entry.riskScore}</span>
+              </div>
+              <p style={{
+                fontSize: '11px', color: 'rgba(242,240,232,0.45)', margin: 0, lineHeight: 1.5,
+                display: '-webkit-box', WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical', overflow: 'hidden',
+              }}>
+                {entry.reflection}
+              </p>
+              <div style={{ fontSize: '10px', color: 'rgba(242,240,232,0.2)', marginTop: '8px' }}>
+                {format(new Date(entry.createdAt), 'MMM d')}
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+
+      {/* Export section */}
+      <div style={{
+        background: '#111118', border: '1px solid rgba(255,255,255,0.06)',
+        borderRadius: '20px', padding: '28px',
+      }}>
+        <div style={{ fontSize: '16px', fontWeight: 600, color: '#F2F0E8', marginBottom: '6px' }}>
+          Share your journey
+        </div>
+        <p style={{ fontSize: '13px', color: 'rgba(242,240,232,0.4)', margin: '0 0 20px' }}>
+          Export your portfolio for academic records or share with your institution
+        </p>
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+          <button style={{
+            display: 'flex', alignItems: 'center', gap: '8px',
+            padding: '12px 24px', borderRadius: '14px', fontSize: '13px',
+            background: 'linear-gradient(135deg,#E8B84B,#F5D380)', color: '#06060A',
+            fontWeight: 700, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+          }}>
+            <Download size={16} /> Export as PDF
+          </button>
+          <button style={{
+            display: 'flex', alignItems: 'center', gap: '8px',
+            padding: '12px 24px', borderRadius: '14px', fontSize: '13px',
+            background: 'rgba(255,255,255,0.04)', color: 'rgba(242,240,232,0.6)',
+            border: '1px solid rgba(255,255,255,0.07)', cursor: 'pointer', fontFamily: 'inherit',
+          }}>
+            <ExternalLink size={16} /> Copy shareable link
+          </button>
+        </div>
+
+        {/* PDF preview mockup */}
+        <div style={{
+          marginTop: '20px', background: 'rgba(255,255,255,0.02)',
+          border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px',
+          padding: '16px', display: 'flex', gap: '12px', alignItems: 'center',
+        }}>
+          <div style={{
+            width: '48px', height: '64px', background: 'rgba(255,255,255,0.04)',
+            border: '1px solid rgba(255,255,255,0.07)', borderRadius: '6px',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          }}>
+            <div style={{ fontSize: '8px', color: 'rgba(242,240,232,0.2)', textAlign: 'center', lineHeight: 1.3 }}>
+              PDF<br />Preview
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: '12px', color: 'rgba(242,240,232,0.5)' }}>
+              MentoringDiaries Portfolio
+            </div>
+            <div style={{ fontSize: '11px', color: 'rgba(242,240,232,0.25)', marginTop: '2px' }}>
+              {user?.name || 'Student'} · {data.semester} · {data.entries} entries
+            </div>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  )
 }

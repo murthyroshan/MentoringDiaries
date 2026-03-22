@@ -1,265 +1,452 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { motion } from 'framer-motion'
-import {
-    BookOpen, GraduationCap, Trophy, Zap,
-    Search, Calendar, Filter
-} from 'lucide-react'
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
+import { useNavigate } from 'react-router-dom'
+import { Download, X, ChevronRight } from 'lucide-react'
 import { format } from 'date-fns'
 import api from '../../services/api'
-import RiskBadge from '../../components/ui/RiskBadge'
-import SentimentChip from '../../components/ui/SentimentChip'
 
-// ── Type config ───────────────────────────────────────────────────────────────
-const TYPE_CONFIG = {
-    weekly: { label: 'Weekly', icon: BookOpen, color: '#8b5cf6', bg: 'rgba(139,92,246,0.1)' },
-    academic: { label: 'Academic', icon: GraduationCap, color: '#06b6d4', bg: 'rgba(6,182,212,0.1)' },
-    event: { label: 'Event', icon: Trophy, color: '#f59e0b', bg: 'rgba(245,158,11,0.1)' },
-    skill: { label: 'Skill', icon: Zap, color: '#10b981', bg: 'rgba(16,185,129,0.1)' },
-}
-
-const FILTER_OPTIONS = [
-    { value: 'all', label: 'All Types' },
-    { value: 'weekly', label: 'Weekly Reports' },
-    { value: 'academic', label: 'Academic Records' },
-    { value: 'event', label: 'Events' },
-    { value: 'skill', label: 'Skill Updates' },
+// ── Demo fallback data ─────────────────────────────────────────────────────────
+const DEMO_ENTRIES = [
+  { _id:'1', week:14, mood:'😊', riskScore:23, riskLevel:'low', reflection:'Had a productive week overall. Managed to complete all assignments on time and attended all classes. Feeling good about the upcoming exams.', subjectCount:4, createdAt:new Date().toISOString(), reviewStatus:'reviewed' },
+  { _id:'2', week:13, mood:'🙂', riskScore:31, riskLevel:'low', reflection:'Struggled a bit with the advanced topics in Computer Science but got help from peers. Attendance was consistent.', subjectCount:4, createdAt:new Date(Date.now()-7*86400000).toISOString(), reviewStatus:'reviewed' },
+  { _id:'3', week:12, mood:'😐', riskScore:48, riskLevel:'medium', reflection:'Missed two classes due to illness. Need to catch up on the material covered. Feeling slightly behind.', subjectCount:3, createdAt:new Date(Date.now()-14*86400000).toISOString(), reviewStatus:'pending' },
+  { _id:'4', week:11, mood:'😊', riskScore:25, riskLevel:'low', reflection:'Great week! Submitted all assignments early and had a productive mentoring session with Dr. Reema.', subjectCount:5, createdAt:new Date(Date.now()-21*86400000).toISOString(), reviewStatus:'reviewed' },
+  { _id:'5', week:10, mood:'😔', riskScore:72, riskLevel:'high', reflection:'Very difficult week. Multiple deadlines coincided and I felt overwhelmed. Need better time management.', subjectCount:4, createdAt:new Date(Date.now()-28*86400000).toISOString(), reviewStatus:'flagged' },
+  { _id:'6', week:9, mood:'🙂', riskScore:38, riskLevel:'low', reflection:'Steady week with no major issues. Completed lab reports and attended all sessions.', subjectCount:4, createdAt:new Date(Date.now()-35*86400000).toISOString(), reviewStatus:'reviewed' },
 ]
 
-// ── Card Components per type ──────────────────────────────────────────────────
-function WeeklyCard({ entry }) {
-    const cfg = TYPE_CONFIG.weekly
-    return (
-        <Link to={`/entries/${entry._id}`} className="block">
-            <div className="glass-card p-5 hover:border-violet-300 transition-colors cursor-pointer h-full">
-                <div className="flex items-start justify-between mb-3">
-                    <div>
-                        <p className="font-semibold text-sm" style={{ color: 'rgb(var(--text-primary))' }}>
-                            {entry.periodLabel || (entry.startDate
-                                ? `${format(new Date(entry.startDate), 'MMM d')} – ${format(new Date(entry.endDate), 'MMM d, yyyy')}`
-                                : `Week ${entry.week}`)}
-                        </p>
-                        <p className="text-xs mt-0.5" style={{ color: 'rgb(var(--text-muted))' }}>
-                            <Calendar size={11} className="inline mr-1" />
-                            {format(new Date(entry.createdAt), 'MMM d, yyyy')}
-                        </p>
-                    </div>
-                    <div className="flex gap-2 flex-wrap justify-end">
-                        <SentimentChip sentiment={entry.aiAnalysis?.sentiment} />
-                        <RiskBadge level={entry.aiAnalysis?.riskLevel} />
-                    </div>
-                </div>
-                <p className="text-sm line-clamp-2" style={{ color: 'rgb(var(--text-secondary))' }}>{entry.content}</p>
-                <div className="flex items-center justify-between mt-3">
-                    <span className="badge text-xs" style={{
-                        background: entry.status === 'reviewed' ? 'rgba(34,197,94,0.1)' : 'rgba(99,102,241,0.1)',
-                        color: entry.status === 'reviewed' ? 'rgb(34,197,94)' : 'rgb(99,102,241)',
-                        border: `1px solid ${entry.status === 'reviewed' ? 'rgba(34,197,94,0.3)' : 'rgba(99,102,241,0.3)'}`,
-                    }}>{entry.status}</span>
-                    {entry.aiAnalysis?.riskScore !== undefined && (
-                        <span className="text-xs" style={{ color: 'rgb(var(--text-muted))' }}>Risk: {entry.aiAnalysis.riskScore}/100</span>
-                    )}
-                </div>
+// ── Helpers ────────────────────────────────────────────────────────────────────
+function getRiskColor(score) {
+  if (score < 40) return '#3DD68C'
+  if (score < 70) return '#F59E0B'
+  return '#EF4444'
+}
+
+function getRiskLabel(score) {
+  if (score < 40) return 'Low'
+  if (score < 70) return 'Medium'
+  return 'High'
+}
+
+// ── Skeleton Grid ──────────────────────────────────────────────────────────────
+function SkeletonGrid() {
+  return (
+    <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))', gap:'16px' }}>
+      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}`}</style>
+      {[...Array(6)].map((_, i) => (
+        <div
+          key={i}
+          style={{
+            background:'#111118',
+            border:'1px solid rgba(255,255,255,0.06)',
+            borderRadius:'18px',
+            padding:'20px',
+            height:'180px',
+            animation:'pulse 1.5s ease-in-out infinite',
+            opacity: 1 - i * 0.1,
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
+// ── Empty State ────────────────────────────────────────────────────────────────
+function EmptyState() {
+  const navigate = useNavigate()
+  return (
+    <div style={{
+      display:'flex', flexDirection:'column', alignItems:'center',
+      justifyContent:'center', padding:'80px 20px', textAlign:'center',
+    }}>
+      <div style={{ position:'relative', width:'80px', height:'80px', marginBottom:'24px' }}>
+        <div style={{
+          position:'absolute', inset:0, borderRadius:'20px',
+          border:'1.5px solid rgba(232,184,75,0.15)', transform:'rotate(12deg)',
+        }} />
+        <div style={{
+          position:'absolute', inset:'8px', borderRadius:'16px',
+          border:'1.5px solid rgba(232,184,75,0.1)', transform:'rotate(6deg)',
+        }} />
+        <div style={{
+          position:'absolute', inset:'16px', borderRadius:'12px',
+          border:'1.5px solid rgba(232,184,75,0.25)',
+        }} />
+      </div>
+      <div style={{ fontSize:'20px', color:'rgba(242,240,232,0.3)', marginBottom:'8px' }}>
+        No entries yet
+      </div>
+      <div style={{ fontSize:'13px', color:'rgba(242,240,232,0.2)', marginBottom:'24px' }}>
+        Start documenting your journey
+      </div>
+      <button
+        onClick={() => navigate('/submit')}
+        style={{
+          padding:'10px 24px', borderRadius:'12px', fontSize:'13px',
+          background:'linear-gradient(135deg,#E8B84B,#F5D380)', color:'#06060A',
+          fontWeight:700, border:'none', cursor:'pointer', fontFamily:'inherit',
+        }}
+      >
+        Start your journey →
+      </button>
+    </div>
+  )
+}
+
+// ── Entry Card ─────────────────────────────────────────────────────────────────
+function EntryCard({ entry, delay, onClick }) {
+  const statusColors = { reviewed:'#3DD68C', pending:'#F59E0B', flagged:'#EF4444' }
+  const statusColor = statusColors[entry.reviewStatus] || '#F59E0B'
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity:0, y:12 }}
+      animate={{ opacity:1, y:0 }}
+      exit={{ opacity:0, scale:0.95 }}
+      transition={{ delay, duration:0.3 }}
+      whileHover={{ y:-3, borderColor:'rgba(255,255,255,0.12)', boxShadow:'0 20px 40px rgba(0,0,0,0.4)' }}
+      onClick={onClick}
+      style={{
+        background:'#111118',
+        border:'1px solid rgba(255,255,255,0.06)',
+        borderRadius:'18px',
+        padding:'20px',
+        cursor:'pointer',
+        transition:'border-color 0.25s, box-shadow 0.25s',
+      }}
+    >
+      {/* Top row */}
+      <div style={{ display:'flex', alignItems:'center', gap:'8px' }}>
+        <span style={{
+          padding:'2px 10px', borderRadius:'999px', fontSize:'11px',
+          background:'rgba(232,184,75,0.1)', color:'#E8B84B',
+          border:'1px solid rgba(232,184,75,0.2)', fontWeight:500,
+        }}>
+          Week {entry.week}
+        </span>
+        <span style={{ fontSize:'22px' }}>{entry.mood}</span>
+        <span style={{
+          marginLeft:'auto', fontSize:'10px', padding:'2px 8px', borderRadius:'999px',
+          background:`${getRiskColor(entry.riskScore)}15`,
+          color:getRiskColor(entry.riskScore),
+          border:`1px solid ${getRiskColor(entry.riskScore)}25`,
+        }}>
+          {getRiskLabel(entry.riskScore)} Risk
+        </span>
+      </div>
+
+      {/* Date */}
+      <div style={{ fontSize:'11px', color:'rgba(242,240,232,0.3)', marginTop:'6px' }}>
+        {format(new Date(entry.createdAt), 'MMMM d, yyyy')}
+      </div>
+
+      {/* Divider */}
+      <div style={{ height:'1px', background:'rgba(255,255,255,0.05)', margin:'12px 0' }} />
+
+      {/* Reflection preview */}
+      <p style={{
+        fontSize:'13px', color:'rgba(242,240,232,0.5)', margin:0, lineHeight:1.6,
+        display:'-webkit-box', WebkitLineClamp:3, WebkitBoxOrient:'vertical', overflow:'hidden',
+      }}>
+        {entry.reflection}
+      </p>
+
+      {/* Bottom row */}
+      <div style={{ display:'flex', alignItems:'center', gap:'8px', marginTop:'14px' }}>
+        <span style={{ fontSize:'11px', color:'rgba(242,240,232,0.3)', flex:1 }}>
+          {entry.subjectCount} subjects
+        </span>
+        <span style={{
+          fontSize:'10px', padding:'2px 8px', borderRadius:'999px',
+          background:`${statusColor}12`,
+          color:statusColor,
+          border:`1px solid ${statusColor}25`,
+          animation: entry.reviewStatus === 'flagged' ? 'flag-pulse 2s ease-in-out infinite' : 'none',
+        }}>
+          {entry.reviewStatus === 'reviewed'
+            ? 'Reviewed'
+            : entry.reviewStatus === 'flagged'
+            ? '⚠ Flagged'
+            : 'Pending'}
+        </span>
+      </div>
+    </motion.div>
+  )
+}
+
+// ── Slide-Over Panel ───────────────────────────────────────────────────────────
+function SlideOverPanel({ entry, onClose }) {
+  return (
+    <>
+      {/* Backdrop */}
+      <motion.div
+        initial={{ opacity:0 }}
+        animate={{ opacity:1 }}
+        exit={{ opacity:0 }}
+        onClick={onClose}
+        style={{
+          position:'fixed', inset:0,
+          background:'rgba(0,0,0,0.5)',
+          zIndex:40,
+          backdropFilter:'blur(4px)',
+        }}
+      />
+
+      {/* Panel */}
+      <motion.div
+        initial={{ x:'100%' }}
+        animate={{ x:0 }}
+        exit={{ x:'100%' }}
+        transition={{ type:'spring', stiffness:300, damping:30 }}
+        style={{
+          position:'fixed', right:0, top:0, bottom:0,
+          width:'420px', maxWidth:'95vw',
+          background:'#111118',
+          borderLeft:'1px solid rgba(232,184,75,0.08)',
+          zIndex:50,
+          overflowY:'auto',
+          padding:'28px',
+        }}
+      >
+        {/* Close button */}
+        <button
+          onClick={onClose}
+          style={{
+            position:'absolute', top:'20px', right:'20px',
+            background:'rgba(255,255,255,0.04)',
+            border:'1px solid rgba(255,255,255,0.07)',
+            borderRadius:'8px', padding:'6px',
+            cursor:'pointer', color:'rgba(242,240,232,0.5)',
+            display:'flex', alignItems:'center', justifyContent:'center',
+          }}
+        >
+          <X size={16} />
+        </button>
+
+        {/* Week + mood header */}
+        <div style={{
+          display:'flex', alignItems:'center', gap:'10px',
+          marginBottom:'20px', paddingRight:'40px',
+        }}>
+          <span style={{ fontSize:'32px' }}>{entry.mood}</span>
+          <div>
+            <div style={{ fontSize:'20px', fontWeight:700, color:'#F2F0E8' }}>
+              Week {entry.week}
             </div>
-        </Link>
-    )
-}
-
-function AcademicCard({ entry }) {
-    const examLabels = { mid1: 'Mid Semester I', mid2: 'Mid Semester II', endsem: 'End Semester' }
-    return (
-        <div className="glass-card p-5 h-full" style={{ borderLeft: `3px solid ${TYPE_CONFIG.academic.color}` }}>
-            <p className="font-semibold text-sm mb-1" style={{ color: 'rgb(var(--text-primary))' }}>
-                {examLabels[entry.examType] || entry.examType} — Sem {entry.semester}
-            </p>
-            <p className="text-xs mb-3" style={{ color: 'rgb(var(--text-muted))' }}>
-                <Calendar size={11} className="inline mr-1" />{format(new Date(entry.createdAt), 'MMM d, yyyy')}
-            </p>
-            {entry.examType === 'endsem' ? (
-                <div className="flex items-center gap-3">
-                    <span className="text-xs" style={{ color: 'rgb(var(--text-secondary))' }}>
-                        {entry.endsemSubjects?.length || 0} subjects graded
-                    </span>
-                    {entry.finalCgpa != null && (
-                        <span className="badge text-xs font-bold" style={{ background: TYPE_CONFIG.academic.bg, color: TYPE_CONFIG.academic.color }}>
-                            CGPA: {entry.finalCgpa}
-                        </span>
-                    )}
-                </div>
-            ) : (
-                <div className="flex items-center gap-3">
-                    <span className="text-xs" style={{ color: 'rgb(var(--text-secondary))' }}>
-                        {entry.subjects?.length || 0} subjects
-                    </span>
-                    <span className="badge text-xs font-bold" style={{ background: TYPE_CONFIG.academic.bg, color: TYPE_CONFIG.academic.color }}>
-                        {entry.overallPercentage ?? 0}%
-                    </span>
-                </div>
-            )}
+            <div style={{ fontSize:'12px', color:'rgba(242,240,232,0.35)' }}>
+              {format(new Date(entry.createdAt), 'EEEE, MMMM d, yyyy')}
+            </div>
+          </div>
+          <span style={{
+            marginLeft:'auto', padding:'3px 10px', borderRadius:'999px', fontSize:'12px',
+            background:`${getRiskColor(entry.riskScore)}15`,
+            color:getRiskColor(entry.riskScore),
+            border:`1px solid ${getRiskColor(entry.riskScore)}25`,
+          }}>
+            {entry.riskScore} Risk
+          </span>
         </div>
-    )
-}
 
-function EventCard({ entry }) {
-    const achievementColors = {
-        winner: '#f59e0b', 'runner-up': '#94a3b8', participated: '#64748b',
-        'special-mention': '#8b5cf6', coordinator: '#06b6d4', volunteer: '#10b981', other: '#64748b',
-    }
-    const color = achievementColors[entry.achievement] || '#64748b'
-    return (
-        <div className="glass-card p-5 h-full" style={{ borderLeft: `3px solid ${TYPE_CONFIG.event.color}` }}>
-            <div className="flex items-start justify-between mb-2">
-                <p className="font-semibold text-sm" style={{ color: 'rgb(var(--text-primary))' }}>{entry.eventName}</p>
-                <span className="badge text-xs font-semibold capitalize px-2 py-0.5" style={{ background: `${color}20`, color }}>
-                    {entry.achievement}
+        <div style={{ height:'1px', background:'rgba(255,255,255,0.05)', marginBottom:'20px' }} />
+
+        {/* Reflection */}
+        <div style={{ marginBottom:'20px' }}>
+          <div style={{
+            fontSize:'11px', color:'rgba(242,240,232,0.35)', marginBottom:'8px',
+            fontWeight:500, letterSpacing:'0.04em', textTransform:'uppercase',
+          }}>
+            Reflection
+          </div>
+          <p style={{ fontSize:'13px', color:'rgba(242,240,232,0.7)', lineHeight:1.7, margin:0 }}>
+            {entry.reflection}
+          </p>
+        </div>
+
+        {/* Subject ratings — only if present */}
+        {entry.subjects?.length > 0 && (
+          <div style={{ marginBottom:'20px' }}>
+            <div style={{
+              fontSize:'11px', color:'rgba(242,240,232,0.35)', marginBottom:'10px',
+              fontWeight:500, letterSpacing:'0.04em', textTransform:'uppercase',
+            }}>
+              Subjects
+            </div>
+            {entry.subjects.map((s, i) => (
+              <div
+                key={i}
+                style={{
+                  display:'flex', justifyContent:'space-between',
+                  alignItems:'center', marginBottom:'8px',
+                }}
+              >
+                <span style={{ fontSize:'13px', color:'rgba(242,240,232,0.6)' }}>{s.name}</span>
+                <span style={{ color:'#E8B84B', fontSize:'14px' }}>
+                  {'★'.repeat(s.rating)}{'☆'.repeat(5 - s.rating)}
                 </span>
-            </div>
-            <p className="text-xs mb-1" style={{ color: 'rgb(var(--text-muted))' }}>
-                {entry.organizedBy} · {entry.date ? format(new Date(entry.date), 'MMM d, yyyy') : '—'}
-            </p>
-            <p className="text-xs capitalize" style={{ color: 'rgb(var(--text-secondary))' }}>{entry.eventType}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Mentor feedback */}
+        <div style={{
+          background:'rgba(232,184,75,0.04)',
+          border:'1px solid rgba(232,184,75,0.1)',
+          borderRadius:'12px',
+          padding:'14px',
+        }}>
+          <div style={{
+            fontSize:'11px', color:'rgba(232,184,75,0.6)', marginBottom:'6px',
+            fontWeight:500, letterSpacing:'0.04em', textTransform:'uppercase',
+          }}>
+            Mentor Feedback
+          </div>
+          <p style={{ fontSize:'12px', color:'rgba(242,240,232,0.5)', margin:0, lineHeight:1.6 }}>
+            {entry.mentorComment || 'Your mentor has been notified and will review this entry soon.'}
+          </p>
         </div>
-    )
+      </motion.div>
+    </>
+  )
 }
 
-function SkillCard({ entry }) {
-    const delta = (entry.ratingAfter ?? 0) - (entry.ratingBefore ?? 0)
-    return (
-        <div className="glass-card p-5 h-full" style={{ borderLeft: `3px solid ${TYPE_CONFIG.skill.color}` }}>
-            <div className="flex items-start justify-between mb-2">
-                <p className="font-semibold text-sm" style={{ color: 'rgb(var(--text-primary))' }}>{entry.skillName}</p>
-                {delta > 0 && (
-                    <span className="badge text-xs font-bold" style={{ background: 'rgba(16,185,129,0.1)', color: '#10b981' }}>▲ +{delta}</span>
-                )}
-            </div>
-            <p className="text-xs mb-2" style={{ color: 'rgb(var(--text-muted))' }}>
-                {entry.skillCategory} · {entry.source}
-            </p>
-            <div className="flex items-center gap-2 text-xs" style={{ color: 'rgb(var(--text-secondary))' }}>
-                <span>{'★'.repeat(entry.ratingBefore ?? 0)}{'☆'.repeat(5 - (entry.ratingBefore ?? 0))}</span>
-                <span>→</span>
-                <span style={{ color: TYPE_CONFIG.skill.color }}>{'★'.repeat(entry.ratingAfter ?? 0)}{'☆'.repeat(5 - (entry.ratingAfter ?? 0))}</span>
-            </div>
-        </div>
-    )
-}
-
-// ── Main MyEntries Page ───────────────────────────────────────────────────────
+// ── Main Export ────────────────────────────────────────────────────────────────
 export default function MyEntries() {
-    const [typeFilter, setTypeFilter] = useState('all')
-    const [search, setSearch] = useState('')
+  const reduced = useReducedMotion()
+  const [filter, setFilter] = useState('all')
+  const [selectedEntry, setSelectedEntry] = useState(null)
 
-    const { data, isLoading } = useQuery({
-        queryKey: ['my-all-entries'],
-        queryFn: () => api.get('/student/all-entries').then(r => r.data),
-        staleTime: 30000,
-    })
+  const { data: rawEntries, isLoading } = useQuery({
+    queryKey: ['my-entries'],
+    queryFn: () =>
+      api.get('/diary')
+        .then(r => r.data?.entries || r.data)
+        .catch(() => DEMO_ENTRIES),
+  })
 
-    const allEntries = data?.data || []
-    const counts = data?.counts || {}
+  const entries = rawEntries || DEMO_ENTRIES
 
-    // Client-side filter
-    const filtered = allEntries.filter(e => {
-        if (typeFilter !== 'all' && e.type !== typeFilter) return false
-        if (search) {
-            const q = search.toLowerCase()
-            const searchable = [
-                e.content, e.eventName, e.skillName,
-                e.examType, e.organizedBy, e.description,
-            ].filter(Boolean).join(' ').toLowerCase()
-            return searchable.includes(q)
+  const filtered = entries.filter(e => {
+    if (filter === 'this-month') {
+      const now = new Date()
+      const d = new Date(e.createdAt)
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
+    }
+    if (filter === 'high-risk') return e.riskScore >= 70
+    if (filter === 'pending') return e.reviewStatus === 'pending'
+    return true
+  })
+
+  return (
+    <motion.div
+      initial={reduced ? {} : { opacity:0, y:16 }}
+      animate={{ opacity:1, y:0 }}
+      exit={reduced ? {} : { opacity:0 }}
+      transition={{ duration:0.35, ease:[0.25,0.1,0.25,1] }}
+    >
+      {/* Global keyframes */}
+      <style>{`
+        @keyframes flag-pulse {
+          0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(239,68,68,0.3); }
+          50%       { opacity: 0.8; box-shadow: 0 0 0 4px rgba(239,68,68,0); }
         }
-        return true
-    })
+      `}</style>
 
-    return (
-        <div className="space-y-5">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <div>
-                    <h2 className="text-xl font-bold" style={{ color: 'rgb(var(--text-primary))' }}>My Entries</h2>
-                    <p className="text-xs mt-0.5" style={{ color: 'rgb(var(--text-muted))' }}>
-                        All your records — weekly, academic, events &amp; skills
-                    </p>
-                </div>
-                <Link to="/submit" className="btn btn-primary text-sm">+ New Entry</Link>
-            </div>
-
-            {/* Count pills */}
-            {!isLoading && (
-                <div className="flex flex-wrap gap-2">
-                    {Object.entries(TYPE_CONFIG).map(([type, cfg]) => {
-                        const Icon = cfg.icon
-                        return (
-                            <button key={type}
-                                onClick={() => setTypeFilter(typeFilter === type ? 'all' : type)}
-                                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all"
-                                style={{
-                                    background: typeFilter === type ? cfg.bg : 'rgb(var(--bg-secondary))',
-                                    color: typeFilter === type ? cfg.color : 'rgb(var(--text-muted))',
-                                    border: `1px solid ${typeFilter === type ? cfg.color + '60' : 'rgb(var(--border-color))'}`,
-                                }}>
-                                <Icon size={12} />
-                                {cfg.label} ({counts[type] ?? 0})
-                            </button>
-                        )
-                    })}
-                </div>
-            )}
-
-            {/* Search + filter row */}
-            <div className="glass-card p-4 flex flex-wrap gap-3">
-                <div className="flex items-center gap-2 flex-1 min-w-40">
-                    <Search size={15} style={{ color: 'rgb(var(--text-muted))' }} />
-                    <input
-                        value={search} onChange={e => setSearch(e.target.value)}
-                        className="form-input py-2 text-sm" placeholder="Search entries..."
-                    />
-                </div>
-                <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className="form-input py-2 text-sm w-auto">
-                    {FILTER_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-            </div>
-
-            {/* Entries Grid */}
-            {isLoading ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {[1, 2, 3, 4].map(i => <div key={i} className="skeleton h-36 rounded-2xl" />)}
-                </div>
-            ) : filtered.length === 0 ? (
-                <div className="glass-card p-16 text-center">
-                    <Filter size={32} className="mx-auto mb-3 opacity-30" />
-                    <p className="text-sm" style={{ color: 'rgb(var(--text-muted))' }}>
-                        {allEntries.length === 0 ? 'No entries yet. Submit your first entry!' : 'No entries match your filter.'}
-                    </p>
-                </div>
-            ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {filtered.map((e, i) => {
-                        const cfg = TYPE_CONFIG[e.type]
-                        const Icon = cfg?.icon || BookOpen
-                        return (
-                            <motion.div
-                                key={`${e.type}-${e._id}`}
-                                initial={{ opacity: 0, y: 12 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: Math.min(i * 0.04, 0.3) }}
-                            >
-                                {/* Type chip */}
-                                <div className="flex items-center gap-1.5 mb-1.5 px-1">
-                                    <Icon size={12} style={{ color: cfg?.color }} />
-                                    <span className="text-xs font-medium" style={{ color: cfg?.color }}>{cfg?.label}</span>
-                                </div>
-                                {e.type === 'weekly' && <WeeklyCard entry={e} />}
-                                {e.type === 'academic' && <AcademicCard entry={e} />}
-                                {e.type === 'event' && <EventCard entry={e} />}
-                                {e.type === 'skill' && <SkillCard entry={e} />}
-                            </motion.div>
-                        )
-                    })}
-                </div>
-            )}
+      {/* Header row */}
+      <div style={{
+        display:'flex', justifyContent:'space-between',
+        alignItems:'center', marginBottom:'24px',
+      }}>
+        <div style={{ display:'flex', alignItems:'center', gap:'12px' }}>
+          <h1 style={{
+            fontFamily:'"Sora",system-ui', fontSize:'24px',
+            fontWeight:700, color:'#F2F0E8', margin:0,
+          }}>
+            My Entries
+          </h1>
+          <span style={{
+            padding:'2px 10px', borderRadius:'999px', fontSize:'12px',
+            background:'rgba(232,184,75,0.1)', color:'#E8B84B',
+            border:'1px solid rgba(232,184,75,0.2)',
+          }}>
+            {entries.length}
+          </span>
         </div>
-    )
+        <button style={{
+          display:'flex', alignItems:'center', gap:'6px',
+          padding:'8px 16px', borderRadius:'12px', fontSize:'12px',
+          background:'rgba(232,184,75,0.08)', color:'#E8B84B',
+          border:'1px solid rgba(232,184,75,0.2)',
+          cursor:'pointer', fontFamily:'inherit',
+        }}>
+          <Download size={14} /> Export PDF
+        </button>
+      </div>
+
+      {/* Filter bar */}
+      <div style={{
+        display:'flex', gap:'8px', flexWrap:'wrap',
+        position:'sticky', top:'60px', zIndex:20,
+        background:'rgba(6,6,10,0.9)', backdropFilter:'blur(16px)',
+        padding:'10px 0', margin:'-10px 0 24px',
+      }}>
+        {[
+          ['all',          'All'],
+          ['this-month',   'This Month'],
+          ['high-risk',    'High Risk'],
+          ['pending',      'Pending Review'],
+        ].map(([val, label]) => (
+          <button
+            key={val}
+            onClick={() => setFilter(val)}
+            style={{
+              padding:'6px 14px', borderRadius:'999px', fontSize:'12px',
+              cursor:'pointer', fontFamily:'inherit', transition:'all 0.15s',
+              background: filter === val ? 'rgba(232,184,75,0.12)' : 'transparent',
+              border: `1px solid ${filter === val ? 'rgba(232,184,75,0.3)' : 'rgba(255,255,255,0.07)'}`,
+              color: filter === val ? '#E8B84B' : 'rgba(242,240,232,0.4)',
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Entries grid */}
+      {isLoading ? (
+        <SkeletonGrid />
+      ) : filtered.length === 0 ? (
+        <EmptyState />
+      ) : (
+        <div style={{
+          display:'grid',
+          gridTemplateColumns:'repeat(auto-fill,minmax(300px,1fr))',
+          gap:'16px',
+        }}>
+          <AnimatePresence mode="popLayout">
+            {filtered.map((entry, i) => (
+              <EntryCard
+                key={entry._id}
+                entry={entry}
+                delay={i * 0.05}
+                onClick={() => setSelectedEntry(entry)}
+              />
+            ))}
+          </AnimatePresence>
+        </div>
+      )}
+
+      {/* Slide-over panel */}
+      <AnimatePresence>
+        {selectedEntry && (
+          <SlideOverPanel
+            entry={selectedEntry}
+            onClose={() => setSelectedEntry(null)}
+          />
+        )}
+      </AnimatePresence>
+    </motion.div>
+  )
 }

@@ -14,7 +14,7 @@ import BentoGrid      from '../../components/landing/BentoGrid'
 const ParticleField = lazy(() => import('../../components/landing/ParticleField'))
 
 // Stable motion-wrapped Link — defined after imports, outside any component
-const MotionLink = motion(Link)
+const MotionLink = motion.create(Link)
 
 // ── Design tokens ─────────────────────────────────────────────────────────────
 const C = {

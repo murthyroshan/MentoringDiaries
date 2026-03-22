@@ -1,693 +1,882 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
-import { useMutation } from '@tanstack/react-query'
-import { motion, AnimatePresence } from 'framer-motion'
-import {
-    BookOpen, Star, AlertTriangle, Heart, Paperclip, Trophy, Zap,
-    ChevronRight, ChevronLeft, CheckCircle2, Brain, Calendar, GraduationCap
-} from 'lucide-react'
-import { format, addDays, differenceInCalendarDays } from 'date-fns'
-import api from '../../services/api'
+import { useState, useRef, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../../store/authStore'
-import { useUIStore } from '../../store/uiStore'
-import { getSubjectsForSemester, SKILL_CATEGORIES, SKILL_SOURCES, EVENT_TYPES, ACHIEVEMENTS, EXAM_TYPES } from '../../constants/subjects'
+import api from '../../services/api'
+import { ChevronLeft, Check } from 'lucide-react'
 
-// ─── Entry Type Definitions ───────────────────────────────────────────────────
-const ENTRY_TYPES = [
-    { id: 'weekly', label: 'Weekly Report', icon: BookOpen, description: 'Your weekly academic reflection', color: '#8b5cf6' },
-    { id: 'academic', label: 'Academic Record', icon: GraduationCap, description: 'Exam marks and performance', color: '#06b6d4' },
-    { id: 'event', label: 'Event / Achievement', icon: Trophy, description: 'Add to your portfolio', color: '#f59e0b' },
-    { id: 'skill', label: 'Skill Update', icon: Zap, description: 'Track skill growth', color: '#10b981' },
+const MOODS = [
+  { emoji: '😔', label: 'Tough' },
+  { emoji: '😐', label: 'Okay' },
+  { emoji: '🙂', label: 'Good' },
+  { emoji: '😊', label: 'Great' },
+  { emoji: '🤩', label: 'Amazing' },
 ]
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+const EMOTIONS = ['Anxious', 'Stressed', 'Neutral', 'Motivated', 'Confident']
+const EMOTION_COLORS = {
+  Anxious: '#EF4444',
+  Stressed: '#F59E0B',
+  Neutral: 'rgba(242,240,232,0.3)',
+  Motivated: '#3B82F6',
+  Confident: '#E8B84B',
+}
+const SUBJECTS = ['Mathematics', 'Computer Science', 'English', 'Physics', 'History']
+const AI_STEPS = ['Checking sentiment...', 'Calculating risk score...', 'Generating insights...']
 
-const END_SEMESTER_GRADES = ['F', 'C', 'B', 'B+', 'A', 'A+', 'O']
-
-// ─── Star Rating Component ────────────────────────────────────────────────────
-function StarRating({ value, onChange, label }) {
-    return (
-        <div className="flex items-center gap-2">
-            {label && <span className="text-sm font-medium" style={{ color: 'rgb(var(--text-secondary))' }}>{label}</span>}
-            <div className="flex gap-1">
-                {[1, 2, 3, 4, 5].map(n => (
-                    <button key={n} type="button" onClick={() => onChange(n)}
-                        className="transition-transform hover:scale-110">
-                        <Star size={18} fill={n <= value ? '#f59e0b' : 'none'} stroke={n <= value ? '#f59e0b' : 'rgb(var(--text-muted))'} />
-                    </button>
-                ))}
-            </div>
-        </div>
-    )
+const stepVariants = {
+  initial: { opacity: 0, x: 50 },
+  animate: { opacity: 1, x: 0, transition: { duration: 0.3, ease: [0.25, 0.1, 0.25, 1] } },
+  exit: { opacity: 0, x: -50, transition: { duration: 0.2 } },
 }
 
-// ─── AI Analysis Panel ────────────────────────────────────────────────────────
-function AIPanel({ analysis, onClose }) {
-    const riskColors = { low: '#22c55e', medium: '#f59e0b', high: '#f97316', critical: '#ef4444' }
-    const color = riskColors[analysis?.riskLevel] || '#8b5cf6'
+function GoldButton({ children, onClick, disabled, style = {} }) {
+  return (
+    <motion.button
+      onClick={onClick}
+      disabled={disabled}
+      whileHover={disabled ? {} : { scale: 1.01 }}
+      whileTap={disabled ? {} : { scale: 0.99 }}
+      style={{
+        padding: '14px 24px',
+        borderRadius: '14px',
+        fontSize: '14px',
+        background: disabled
+          ? 'rgba(232,184,75,0.25)'
+          : 'linear-gradient(135deg,#E8B84B 0%,#F5D380 50%,#E8B84B 100%)',
+        color: disabled ? 'rgba(6,6,10,0.5)' : '#06060A',
+        fontWeight: 700,
+        border: 'none',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        fontFamily: 'inherit',
+        width: '100%',
+        ...style,
+      }}
+    >
+      {children}
+    </motion.button>
+  )
+}
 
-    return (
+function BackButton({ onClick, disabled }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        padding: '14px 18px',
+        borderRadius: '14px',
+        fontSize: '14px',
+        background: 'rgba(255,255,255,0.04)',
+        color: 'rgba(242,240,232,0.5)',
+        border: '1px solid rgba(255,255,255,0.07)',
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+      }}
+    >
+      <ChevronLeft size={16} /> Back
+    </button>
+  )
+}
+
+function ConfettiBurst() {
+  const particles = Array.from({ length: 30 }, (_, i) => ({
+    angle: (i / 30) * 360,
+    dist: 40 + Math.random() * 60,
+    color: i % 3 === 0 ? '#E8B84B' : i % 3 === 1 ? '#D4622A' : '#F5D380',
+    size: 3 + Math.random() * 4,
+  }))
+  return (
+    <div style={{ position: 'absolute', top: '50%', left: '50%', pointerEvents: 'none' }}>
+      {particles.map((p, i) => (
         <motion.div
-            initial={{ opacity: 0, x: 40 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 40 }}
-            className="glass-card p-5 border-l-4"
-            style={{ borderColor: color }}
+          key={i}
+          initial={{ x: 0, y: 0, opacity: 1, scale: 1 }}
+          animate={{
+            x: Math.cos((p.angle * Math.PI) / 180) * p.dist,
+            y: Math.sin((p.angle * Math.PI) / 180) * p.dist,
+            opacity: 0,
+            scale: 0,
+          }}
+          transition={{ duration: 0.8, delay: 0.3 + i * 0.01, ease: 'easeOut' }}
+          style={{
+            position: 'absolute',
+            width: p.size,
+            height: p.size,
+            borderRadius: '50%',
+            background: p.color,
+            transform: 'translate(-50%,-50%)',
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
+function SuccessOverlay({ score }) {
+  const navigate = useNavigate()
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ duration: 0.4, ease: [0.25, 0.1, 0.25, 1] }}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        background: 'rgba(6,6,10,0.96)',
+        borderRadius: '24px',
+        zIndex: 20,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '40px',
+      }}
+    >
+      <svg width="64" height="64" viewBox="0 0 64 64" style={{ marginBottom: '20px' }}>
+        <circle cx="32" cy="32" r="30" fill="rgba(61,214,140,0.1)" stroke="#3DD68C" strokeWidth="1.5" />
+        <motion.path
+          d="M20 32l8 8 16-16"
+          stroke="#3DD68C"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          fill="none"
+          initial={{ pathLength: 0 }}
+          animate={{ pathLength: 1 }}
+          transition={{ duration: 0.5, delay: 0.2, ease: 'easeOut' }}
+        />
+      </svg>
+      <h3
+        style={{
+          fontFamily: '"Sora",system-ui',
+          fontSize: '26px',
+          fontWeight: 700,
+          color: '#F2F0E8',
+          margin: 0,
+          textAlign: 'center',
+        }}
+      >
+        Entry submitted!
+      </h3>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px' }}>
+        <span style={{ fontSize: '14px', color: 'rgba(242,240,232,0.6)' }}>
+          AI Risk Score: {score ?? 28}
+        </span>
+        <span
+          style={{
+            padding: '2px 10px',
+            borderRadius: '999px',
+            fontSize: '12px',
+            background: 'rgba(61,214,140,0.1)',
+            color: '#3DD68C',
+            border: '1px solid rgba(61,214,140,0.2)',
+          }}
         >
-            <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                    <Brain size={18} style={{ color }} />
-                    <span className="font-semibold text-sm" style={{ color: 'rgb(var(--text-primary))' }}>AI Analysis</span>
-                </div>
-                <span className="badge px-3 py-1 text-xs font-bold" style={{ background: `${color}20`, color, border: `1px solid ${color}40` }}>
-                    {(analysis?.riskLevel || 'low').toUpperCase()}
-                </span>
-            </div>
-
-            <div className="mb-3">
-                <div className="flex justify-between text-xs mb-1" style={{ color: 'rgb(var(--text-muted))' }}>
-                    <span>Risk Score</span><span>{analysis?.riskScore ?? 0}/100</span>
-                </div>
-                <div className="h-2 rounded-full" style={{ background: 'rgb(var(--bg-secondary))' }}>
-                    <div className="h-full rounded-full transition-all" style={{ width: `${analysis?.riskScore ?? 0}%`, background: color }} />
-                </div>
-            </div>
-
-            {analysis?.riskFactors && (
-                <div className="mb-4 space-y-1">
-                    {Object.entries(analysis.riskFactors).map(([key, val]) => (
-                        <div key={key} className="flex justify-between text-xs" style={{ color: 'rgb(var(--text-secondary))' }}>
-                            <span>{key.replace(/([A-Z])/g, ' $1').replace('Factor', '').trim()}</span>
-                            <span className="font-medium">{Math.round(val)}</span>
-                        </div>
-                    ))}
-                </div>
-            )}
-
-            {analysis?.summary && (
-                <div className="text-xs leading-relaxed whitespace-pre-line" style={{ color: 'rgb(var(--text-secondary))' }}>
-                    {analysis.summary}
-                </div>
-            )}
-
-            <button onClick={onClose} className="btn btn-ghost text-xs mt-3 w-full">Close</button>
-        </motion.div>
-    )
+          Low Risk
+        </span>
+      </div>
+      <p
+        style={{
+          fontSize: '13px',
+          color: 'rgba(242,240,232,0.4)',
+          marginTop: '8px',
+          textAlign: 'center',
+        }}
+      >
+        Your mentor will review shortly
+      </p>
+      <ConfettiBurst />
+      <button
+        onClick={() => navigate('/my-entries')}
+        style={{
+          marginTop: '24px',
+          padding: '12px 28px',
+          borderRadius: '14px',
+          fontSize: '14px',
+          background: 'linear-gradient(135deg,#E8B84B,#F5D380)',
+          color: '#06060A',
+          fontWeight: 700,
+          border: 'none',
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+        }}
+      >
+        View my entries →
+      </button>
+    </motion.div>
+  )
 }
 
-// ─── Weekly Report Form ───────────────────────────────────────────────────────
-function WeeklyForm({ user, onSuccess }) {
-    const semester = user?.semester || 1
-    const department = user?.department || 'DEFAULT'
-    const subjects = useMemo(() => getSubjectsForSemester(department, semester), [department, semester])
+function Step1({ formData, setFormData, onNext }) {
+  const set = (key, val) => setFormData(d => ({ ...d, [key]: val }))
 
-    const today = new Date()
-    const weekStart = format(addDays(today, -6), 'yyyy-MM-dd')
-    const weekEnd = format(today, 'yyyy-MM-dd')
+  return (
+    <motion.div variants={stepVariants} initial="initial" animate="animate" exit="exit">
+      <div style={{ marginBottom: '28px' }}>
+        <h2
+          style={{
+            fontFamily: '"Sora",system-ui,sans-serif',
+            fontSize: '22px',
+            fontWeight: 700,
+            color: '#F2F0E8',
+            margin: 0,
+          }}
+        >
+          How was your week?
+        </h2>
+        <p style={{ fontSize: '13px', color: 'rgba(242,240,232,0.4)', marginTop: '6px', margin: '6px 0 0' }}>
+          Week 14 &middot;{' '}
+          {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+        </p>
+      </div>
 
-    const [step, setStep] = useState(1)
-    const [subjectRatings, setSubjectRatings] = useState(subjects.map(name => ({ name, rating: 3, comment: '' })))
-    const [emotionalRating, setEmotionalRating] = useState(3)
-    const [formData, setFormData] = useState({
-        startDate: weekStart,
-        endDate: weekEnd,
-        content: '',
-        problemsFacedAcademic: '',
-        problemsFacedPersonal: '',
-        problemsFacedOther: '',
-        attendancePercentage: '',
-        attendanceExplanation: '',
-    })
-    const [file, setFile] = useState(null)
-    const [aiResult, setAiResult] = useState(null)
-
-    // ── Date Validation State ─────────────────────────────────────────────
-    const [dateError, setDateError] = useState('')
-    const [dateChecking, setDateChecking] = useState(false)
-    const [dateValid, setDateValid] = useState(true)
-
-    const validateDates = useCallback(async (start, end) => {
-        if (!start || !end) { setDateError(''); setDateValid(true); return }
-        const s = new Date(start), e = new Date(end)
-        if (e <= s) {
-            setDateError('End date must be after start date.')
-            setDateValid(false); return
-        }
-        const diff = differenceInCalendarDays(e, s)
-        if (diff > 7) {
-            setDateError(`Range is ${diff} days — must be ≤ 7 days.`)
-            setDateValid(false); return
-        }
-        // Call backend overlap check
-        setDateChecking(true)
-        setDateError('')
-        try {
-            const res = await api.get(`/diary/check-range?startDate=${start}&endDate=${end}`)
-            if (res.data.rangeError) {
-                setDateError(res.data.message)
-                setDateValid(false)
-            } else if (res.data.overlap) {
-                setDateError(res.data.message)
-                setDateValid(false)
-            } else {
-                setDateError('')
-                setDateValid(true)
-            }
-        } catch {
-            setDateError('Could not verify date range. Please try again.')
-            setDateValid(false)
-        } finally {
-            setDateChecking(false)
-        }
-    }, [])
-
-    // Debounced date validation on change
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            validateDates(formData.startDate, formData.endDate)
-        }, 600)
-        return () => clearTimeout(timer)
-    }, [formData.startDate, formData.endDate, validateDates])
-
-    const mutation = useMutation({
-        mutationFn: (fd) => api.post('/diary', fd, { headers: { 'Content-Type': 'multipart/form-data' } }),
-        onSuccess: (res) => {
-            setAiResult(res.data?.data?.aiAnalysis)
-            onSuccess?.()
-        },
-    })
-
-    const totalSteps = 5
-    const progress = (step / totalSteps) * 100
-
-    const handleSubmit = async () => {
-        if (!dateValid) return
-        const fd = new FormData()
-        fd.append('startDate', formData.startDate)
-        fd.append('endDate', formData.endDate)
-        fd.append('semester', semester)
-        fd.append('content', formData.content)
-        fd.append('subjectRatings', JSON.stringify(subjectRatings))
-        fd.append('problemsFaced', JSON.stringify({
-            academic: formData.problemsFacedAcademic,
-            personal: formData.problemsFacedPersonal,
-            other: formData.problemsFacedOther,
-        }))
-        fd.append('attendancePercentage', formData.attendancePercentage)
-        if (formData.attendancePercentage && Number(formData.attendancePercentage) < 75) {
-            fd.append('attendanceExplanation', formData.attendanceExplanation)
-        }
-        fd.append('emotionalRating', emotionalRating)
-        if (file) fd.append('attachment', file)
-        mutation.mutate(fd)
-    }
-
-    const stepTitles = ['Date Range', 'Section A — Reflection', 'Section B — Subjects', 'Section C & D — Problems & Attendance', 'Section E — Wellbeing']
-    const canProceedStep1 = dateValid && !dateChecking && formData.startDate && formData.endDate
-
-    return (
-        <div className="space-y-6">
-            {/* Progress bar */}
-            <div>
-                <div className="flex justify-between text-xs mb-1" style={{ color: 'rgb(var(--text-muted))' }}>
-                    <span>Step {step} of {totalSteps}: {stepTitles[step - 1]}</span>
-                    <span>{Math.round(progress)}%</span>
-                </div>
-                <div className="h-1.5 rounded-full" style={{ background: 'rgb(var(--bg-secondary))' }}>
-                    <div className="h-full rounded-full transition-all duration-500" style={{ width: `${progress}%`, background: 'linear-gradient(90deg, #8b5cf6, #6366f1)' }} />
-                </div>
-            </div>
-
-            <AnimatePresence mode="wait">
-                <motion.div key={step} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.2 }}>
-
-                    {step === 1 && (
-                        <div className="space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="form-label">Week Start Date</label>
-                                    <input type="date" className={`form-input ${!dateValid ? 'border-red-400' : ''}`} value={formData.startDate}
-                                        onChange={e => setFormData(f => ({ ...f, startDate: e.target.value }))} />
-                                </div>
-                                <div>
-                                    <label className="form-label">Week End Date</label>
-                                    <input type="date" className={`form-input ${!dateValid ? 'border-red-400' : ''}`} value={formData.endDate}
-                                        onChange={e => setFormData(f => ({ ...f, endDate: e.target.value }))} />
-                                </div>
-                            </div>
-
-                            {/* Validation feedback */}
-                            {dateChecking && (
-                                <p className="text-xs flex items-center gap-2" style={{ color: 'rgb(var(--text-muted))' }}>
-                                    <span className="inline-block w-3 h-3 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />
-                                    Checking availability…
-                                </p>
-                            )}
-                            {!dateChecking && dateError && (
-                                <p className="text-xs text-red-500 flex items-center gap-1">
-                                    <AlertTriangle size={13} /> {dateError}
-                                </p>
-                            )}
-                            {!dateChecking && !dateError && formData.startDate && formData.endDate && (
-                                <p className="text-xs text-green-500 flex items-center gap-1">
-                                    <CheckCircle2 size={13} /> Date range looks good!
-                                </p>
-                            )}
-                            <p className="text-xs" style={{ color: 'rgb(var(--text-muted))' }}>
-                                📅 Range must be ≤ 7 days. One entry per period.
-                            </p>
-                        </div>
-                    )}
-
-                    {step === 2 && (
-                        <div className="space-y-4">
-                            <p className="text-sm font-medium" style={{ color: 'rgb(var(--text-secondary))' }}>
-                                Share your reflections, highlights, and overall experience this week.
-                            </p>
-                            <textarea className="form-input" rows={6} placeholder="Write about what you learned, achieved, and experienced this week (min 50 characters)..."
-                                value={formData.content} onChange={e => setFormData(f => ({ ...f, content: e.target.value }))} />
-                            <div>
-                                <label className="form-label">Attachment (optional)</label>
-                                <input type="file" className="form-input" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.txt"
-                                    onChange={e => setFile(e.target.files[0])} />
-                            </div>
-                        </div>
-                    )}
-
-                    {step === 3 && (
-                        <div className="space-y-4">
-                            <p className="text-sm" style={{ color: 'rgb(var(--text-secondary))' }}>
-                                Rate your understanding in each subject this week (1 = struggling, 5 = excellent).
-                            </p>
-                            <div className="space-y-3">
-                                {subjectRatings.map((sr, i) => (
-                                    <div key={sr.name} className="glass-card p-3">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <span className="text-sm font-medium truncate" style={{ color: 'rgb(var(--text-primary))' }}>{sr.name}</span>
-                                            <StarRating value={sr.rating} onChange={r => setSubjectRatings(prev => prev.map((s, j) => j === i ? { ...s, rating: r } : s))} />
-                                        </div>
-                                        <input className="form-input text-xs" placeholder="Optional comment..." value={sr.comment}
-                                            onChange={e => setSubjectRatings(prev => prev.map((s, j) => j === i ? { ...s, comment: e.target.value } : s))} />
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
-                    {step === 4 && (
-                        <div className="space-y-4">
-                            <div>
-                                <label className="form-label">Academic Problems / Challenges</label>
-                                <textarea className="form-input" rows={2} placeholder="Any academic difficulties, backlogs, subjects of concern..."
-                                    value={formData.problemsFacedAcademic} onChange={e => setFormData(f => ({ ...f, problemsFacedAcademic: e.target.value }))} />
-                            </div>
-                            <div>
-                                <label className="form-label">Personal Problems (optional)</label>
-                                <textarea className="form-input" rows={2} placeholder="Health, family, personal concerns..."
-                                    value={formData.problemsFacedPersonal} onChange={e => setFormData(f => ({ ...f, problemsFacedPersonal: e.target.value }))} />
-                            </div>
-                            <div>
-                                <label className="form-label">Other (optional)</label>
-                                <textarea className="form-input" rows={2} placeholder="College life, hostel, transport, etc..."
-                                    value={formData.problemsFacedOther} onChange={e => setFormData(f => ({ ...f, problemsFacedOther: e.target.value }))} />
-                            </div>
-                            <hr style={{ borderColor: 'rgb(var(--border-color))' }} />
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="form-label">Attendance % this week</label>
-                                    <input type="number" className="form-input" min={0} max={100} placeholder="e.g. 85"
-                                        value={formData.attendancePercentage} onChange={e => setFormData(f => ({ ...f, attendancePercentage: e.target.value }))} />
-                                </div>
-                                {Number(formData.attendancePercentage) < 75 && formData.attendancePercentage !== '' && (
-                                    <div>
-                                        <label className="form-label text-red-500">Explanation (required — below 75%)</label>
-                                        <textarea className="form-input border-red-300" rows={2} placeholder="Reason for low attendance..."
-                                            value={formData.attendanceExplanation} onChange={e => setFormData(f => ({ ...f, attendanceExplanation: e.target.value }))} />
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    )}
-
-                    {step === 5 && (
-                        <div className="space-y-6">
-                            <div>
-                                <label className="form-label mb-3 block">How are you feeling this week? (1 = Very Stressed, 5 = Great)</label>
-                                <div className="flex items-center justify-center gap-4 py-4">
-                                    {['😖', '😟', '😐', '😊', '😄'].map((emoji, i) => (
-                                        <button key={i} type="button" onClick={() => setEmotionalRating(i + 1)}
-                                            className="text-3xl transition-transform hover:scale-110"
-                                            style={{ opacity: emotionalRating === i + 1 ? 1 : 0.4, transform: emotionalRating === i + 1 ? 'scale(1.3)' : 'scale(1)' }}>
-                                            {emoji}
-                                        </button>
-                                    ))}
-                                </div>
-                                <p className="text-center text-sm" style={{ color: 'rgb(var(--text-muted))' }}>
-                                    {['Very Stressed', 'Stressed', 'Neutral', 'Good', 'Excellent'][emotionalRating - 1]}
-                                </p>
-                            </div>
-
-                            {!aiResult && (
-                                <div className="glass-card p-4" style={{ background: 'rgba(139,92,246,0.06)', border: '1px solid rgba(139,92,246,0.2)' }}>
-                                    <p className="text-sm font-medium" style={{ color: 'rgb(var(--text-primary))' }}>🤖 Ready for AI Analysis</p>
-                                    <p className="text-xs mt-1" style={{ color: 'rgb(var(--text-muted))' }}>
-                                        Our multi-factor AI engine will analyze your entry across 6 dimensions: sentiment, attendance, subject understanding, academic performance, emotional state, and historical patterns.
-                                    </p>
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </motion.div>
-            </AnimatePresence>
-
-            {/* Navigation */}
-            <div className="flex justify-between gap-3 pt-2">
-                {step > 1 && (
-                    <button className="btn btn-secondary flex items-center gap-2" onClick={() => setStep(s => s - 1)}>
-                        <ChevronLeft size={16} /> Back
-                    </button>
-                )}
-                <div className="flex-1" />
-                {step < totalSteps ? (
-                    <button className="btn btn-primary flex items-center gap-2"
-                        onClick={() => setStep(s => s + 1)}
-                        disabled={
-                            (step === 1 && (!canProceedStep1)) ||
-                            (step === 2 && formData.content.length < 50)
-                        }>
-                        Next <ChevronRight size={16} />
-                    </button>
-                ) : (
-                    <button className="btn btn-primary flex items-center gap-2"
-                        onClick={handleSubmit} disabled={mutation.isPending || !dateValid}>
-                        {mutation.isPending ? 'Submitting...' : <><CheckCircle2 size={16} /> Submit Entry</>}
-                    </button>
-                )}
-            </div>
-
-            {mutation.isError && (
-                <p className="text-sm text-red-500">{mutation.error?.response?.data?.message || 'Submission failed'}</p>
-            )}
-
-            <AnimatePresence>
-                {aiResult && <AIPanel analysis={aiResult} onClose={() => setAiResult(null)} />}
-            </AnimatePresence>
+      <div style={{ marginBottom: '24px' }}>
+        <label
+          style={{
+            fontSize: '12px',
+            color: 'rgba(242,240,232,0.45)',
+            marginBottom: '12px',
+            display: 'block',
+            fontWeight: 500,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+          }}
+        >
+          Overall Mood
+        </label>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          {MOODS.map((m, i) => (
+            <motion.button
+              key={i}
+              onClick={() => set('mood', i)}
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              style={{
+                flex: 1,
+                padding: '12px 8px',
+                borderRadius: '16px',
+                cursor: 'pointer',
+                background: formData.mood === i ? 'rgba(232,184,75,0.08)' : 'rgba(255,255,255,0.02)',
+                border: `1px solid ${formData.mood === i ? 'rgba(232,184,75,0.3)' : 'rgba(255,255,255,0.06)'}`,
+                boxShadow: formData.mood === i ? '0 0 20px rgba(232,184,75,0.12)' : 'none',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '6px',
+                fontFamily: 'inherit',
+                transition: 'background 0.2s, border-color 0.2s',
+              }}
+            >
+              <span style={{ fontSize: formData.mood === i ? '32px' : '28px', transition: 'font-size 0.2s' }}>
+                {m.emoji}
+              </span>
+              <span style={{ fontSize: '11px', color: formData.mood === i ? '#E8B84B' : 'rgba(242,240,232,0.4)' }}>
+                {m.label}
+              </span>
+            </motion.button>
+          ))}
         </div>
-    )
-}
+      </div>
 
-// ─── Academic Record Form ─────────────────────────────────────────────────────
-function AcademicForm({ user, onSuccess }) {
-    const [semester, setSemester] = useState(user?.semester || 1)
-    const [examType, setExamType] = useState('mid1')
-    const subjects = useMemo(() => getSubjectsForSemester(user?.department, semester), [user?.department, semester])
-
-    // Midterm marks state (0–40, maxMarks fixed)
-    const [marks, setMarks] = useState(() => subjects.map(name => ({ name, marks: '' })))
-    // End-semester grades state
-    const [grades, setGrades] = useState(() => subjects.map(name => ({ name, grade: 'B' })))
-    const [finalCgpa, setFinalCgpa] = useState('')
-
-    const isEndsem = examType === 'endsem'
-
-    // Reset when semester or examType changes
-    useEffect(() => {
-        setMarks(subjects.map(name => ({ name, marks: '' })))
-        setGrades(subjects.map(name => ({ name, grade: 'B' })))
-        setFinalCgpa('')
-    }, [subjects, examType])
-
-    const mutation = useMutation({
-        mutationFn: (data) => api.post('/academic', data),
-        onSuccess,
-    })
-
-    const handleSubmit = () => {
-        if (isEndsem) {
-            mutation.mutate({
-                semester,
-                examType,
-                endsemSubjects: grades,
-                finalCgpa: Number(finalCgpa),
-            })
-        } else {
-            mutation.mutate({
-                semester,
-                examType,
-                subjects: marks.map(m => ({ name: m.name, marks: Number(m.marks), maxMarks: 40 })),
-            })
-        }
-    }
-
-    // Midterm marks validation per row
-    const marksError = (val) => {
-        const n = Number(val)
-        if (val === '') return null
-        if (n < 0 || n > 40) return 'Must be 0–40'
-        return null
-    }
-
-    const cgpaError = finalCgpa !== '' && (Number(finalCgpa) < 0 || Number(finalCgpa) > 10)
-
-    return (
-        <div className="space-y-5">
-            <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <label className="form-label">Semester</label>
-                    <select className="form-input" value={semester} onChange={e => setSemester(Number(e.target.value))}>
-                        {[1, 2, 3, 4, 5, 6, 7, 8].map(s => <option key={s} value={s}>Semester {s}</option>)}
-                    </select>
-                </div>
-                <div>
-                    <label className="form-label">Exam Type</label>
-                    <select className="form-input" value={examType} onChange={e => setExamType(e.target.value)}>
-                        {EXAM_TYPES.map(et => <option key={et.value} value={et.value}>{et.label}</option>)}
-                    </select>
-                </div>
-            </div>
-
-            {/* Midterm form */}
-            {!isEndsem && (
-                <>
-                    <p className="text-xs px-1" style={{ color: 'rgb(var(--text-muted))' }}>
-                        Midterm marks are out of <strong>40</strong>. Enter marks between 0 and 40.
-                    </p>
-                    <div className="space-y-2">
-                        {subjects.map((name, i) => {
-                            const err = marksError(marks[i]?.marks)
-                            return (
-                                <div key={name} className="glass-card p-3 flex items-center gap-3">
-                                    <span className="flex-1 text-sm" style={{ color: 'rgb(var(--text-primary))' }}>{name}</span>
-                                    <input type="number" className={`form-input w-24 ${err ? 'border-red-400' : ''}`}
-                                        placeholder="0–40" min={0} max={40}
-                                        value={marks[i]?.marks || ''}
-                                        onChange={e => setMarks(prev => prev.map((m, j) => j === i ? { ...m, marks: e.target.value } : m))} />
-                                    <span className="text-sm font-medium" style={{ color: 'rgb(var(--text-muted))' }}>/ 40</span>
-                                    {err && <span className="text-xs text-red-500">{err}</span>}
-                                </div>
-                            )
-                        })}
-                    </div>
-                </>
-            )}
-
-            {/* End semester form */}
-            {isEndsem && (
-                <>
-                    <p className="text-xs px-1" style={{ color: 'rgb(var(--text-muted))' }}>
-                        Select a grade for each subject. Grade points: F=0, C=5, B=6, B+=7, A=8, A+=9, O=10.
-                    </p>
-                    <div className="space-y-2">
-                        {subjects.map((name, i) => (
-                            <div key={name} className="glass-card p-3 flex items-center gap-3">
-                                <span className="flex-1 text-sm" style={{ color: 'rgb(var(--text-primary))' }}>{name}</span>
-                                <select className="form-input w-28"
-                                    value={grades[i]?.grade || 'B'}
-                                    onChange={e => setGrades(prev => prev.map((g, j) => j === i ? { ...g, grade: e.target.value } : g))}>
-                                    {END_SEMESTER_GRADES.map(g => <option key={g} value={g}>{g}</option>)}
-                                </select>
-                            </div>
-                        ))}
-                    </div>
-                    <div>
-                        <label className="form-label">Final CGPA (0.0 – 10.0)</label>
-                        <input type="number" step="0.01" min={0} max={10}
-                            className={`form-input w-40 ${cgpaError ? 'border-red-400' : ''}`}
-                            placeholder="e.g. 8.5"
-                            value={finalCgpa}
-                            onChange={e => setFinalCgpa(e.target.value)} />
-                        {cgpaError && <p className="text-xs text-red-500 mt-1">CGPA must be between 0 and 10.</p>}
-                    </div>
-                </>
-            )}
-
-            <button className="btn btn-primary w-full" onClick={handleSubmit}
-                disabled={mutation.isPending || cgpaError}>
-                {mutation.isPending ? 'Saving...' : 'Save Academic Record'}
-            </button>
-            {mutation.isError && <p className="text-sm text-red-500">{mutation.error?.response?.data?.message}</p>}
+      <div style={{ marginBottom: '24px' }}>
+        <label
+          style={{
+            fontSize: '12px',
+            color: 'rgba(242,240,232,0.45)',
+            marginBottom: '12px',
+            display: 'block',
+            fontWeight: 500,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+          }}
+        >
+          Attendance This Week
+        </label>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {DAYS.map((day, i) => {
+            const present = formData.attendance.includes(i)
+            return (
+              <button
+                key={i}
+                onClick={() =>
+                  set(
+                    'attendance',
+                    present
+                      ? formData.attendance.filter(d => d !== i)
+                      : [...formData.attendance, i]
+                  )
+                }
+                style={{
+                  width: '40px',
+                  height: '40px',
+                  borderRadius: '50%',
+                  cursor: 'pointer',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  fontFamily: 'inherit',
+                  background: present ? 'rgba(232,184,75,0.15)' : 'rgba(255,255,255,0.03)',
+                  border: `1.5px solid ${present ? 'rgba(232,184,75,0.4)' : 'rgba(255,255,255,0.1)'}`,
+                  color: present ? '#E8B84B' : 'rgba(242,240,232,0.3)',
+                  transition: 'all 0.15s',
+                }}
+              >
+                {day}
+              </button>
+            )
+          })}
+          <span style={{ fontSize: '12px', color: 'rgba(242,240,232,0.35)', marginLeft: '8px' }}>
+            {formData.attendance.length}/5 days
+          </span>
         </div>
-    )
-}
+      </div>
 
-// ─── Event Form ───────────────────────────────────────────────────────────────
-function EventForm({ user, onSuccess }) {
-    const [form, setForm] = useState({ eventName: '', organizedBy: '', eventType: 'technical', achievement: 'participated', date: '', description: '' })
-    const [cert, setCert] = useState(null)
-
-    const mutation = useMutation({
-        mutationFn: (fd) => api.post('/events', fd, { headers: { 'Content-Type': 'multipart/form-data' } }),
-        onSuccess,
-    })
-
-    const handleSubmit = () => {
-        const fd = new FormData()
-        Object.entries(form).forEach(([k, v]) => fd.append(k, v))
-        fd.append('semester', user?.semester || 1)
-        if (cert) fd.append('certificate', cert)
-        mutation.mutate(fd)
-    }
-
-    const f = (k) => ({ value: form[k], onChange: e => setForm(p => ({ ...p, [k]: e.target.value })) })
-
-    return (
-        <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-                <div><label className="form-label">Event Name</label><input className="form-input" placeholder="e.g. Hackathon 2025" {...f('eventName')} /></div>
-                <div><label className="form-label">Organized By</label><input className="form-input" placeholder="e.g. IEEE GCET" {...f('organizedBy')} /></div>
-                <div>
-                    <label className="form-label">Event Type</label>
-                    <select className="form-input" {...f('eventType')}>{EVENT_TYPES.map(t => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}</select>
-                </div>
-                <div>
-                    <label className="form-label">Achievement</label>
-                    <select className="form-input" {...f('achievement')}>{ACHIEVEMENTS.map(a => <option key={a} value={a}>{a.charAt(0).toUpperCase() + a.slice(1)}</option>)}</select>
-                </div>
-                <div><label className="form-label">Event Date</label><input type="date" className="form-input" {...f('date')} /></div>
-                <div>
-                    <label className="form-label">Certificate (optional)</label>
-                    <input type="file" className="form-input" accept=".pdf,.jpg,.jpeg,.png" onChange={e => setCert(e.target.files[0])} />
-                </div>
-            </div>
-            <div><label className="form-label">Description</label><textarea className="form-input" rows={3} placeholder="Brief description of the event and your role..." {...f('description')} /></div>
-            <button className="btn btn-primary w-full" onClick={handleSubmit} disabled={mutation.isPending}>
-                {mutation.isPending ? 'Adding...' : '+ Add to Portfolio'}
-            </button>
-            {mutation.isError && <p className="text-sm text-red-500">{mutation.error?.response?.data?.message}</p>}
+      <div style={{ marginBottom: '28px' }}>
+        <label
+          style={{
+            fontSize: '12px',
+            color: 'rgba(242,240,232,0.45)',
+            marginBottom: '12px',
+            display: 'block',
+            fontWeight: 500,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+          }}
+        >
+          Overall Week Rating
+        </label>
+        <div style={{ position: 'relative' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <span style={{ fontSize: '11px', color: 'rgba(242,240,232,0.3)' }}>Difficult</span>
+            <span style={{ fontSize: '24px', fontWeight: 700, color: '#E8B84B' }}>{formData.weekRating}</span>
+            <span style={{ fontSize: '11px', color: 'rgba(242,240,232,0.3)' }}>Excellent</span>
+          </div>
+          <input
+            type="range"
+            min={1}
+            max={10}
+            value={formData.weekRating}
+            onChange={e => set('weekRating', +e.target.value)}
+            style={{ width: '100%', accentColor: '#E8B84B', cursor: 'pointer', height: '4px' }}
+          />
         </div>
-    )
+      </div>
+
+      <GoldButton onClick={onNext} disabled={formData.mood === null}>
+        Continue →
+      </GoldButton>
+    </motion.div>
+  )
 }
 
-// ─── Skill Form ───────────────────────────────────────────────────────────────
-function SkillForm({ user, onSuccess }) {
-    const [form, setForm] = useState({ skillName: '', skillCategory: 'Technical', ratingBefore: 1, ratingAfter: 3, description: '', source: 'college' })
+function Step2({ formData, setFormData, onNext, onBack }) {
+  const subjects =
+    formData.subjects.length > 0
+      ? formData.subjects
+      : SUBJECTS.map(name => ({ name, rating: 0, comment: '' }))
 
-    const mutation = useMutation({
-        mutationFn: (data) => api.post('/skills', data),
-        onSuccess,
-    })
+  function setSubjectField(idx, field, val) {
+    const updated = subjects.map((s, i) => (i === idx ? { ...s, [field]: val } : s))
+    setFormData(d => ({ ...d, subjects: updated }))
+  }
 
-    return (
-        <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-                <div>
-                    <label className="form-label">Skill Name</label>
-                    <input className="form-input" placeholder="e.g. React.js, Public Speaking..."
-                        value={form.skillName} onChange={e => setForm(p => ({ ...p, skillName: e.target.value }))} />
-                </div>
-                <div>
-                    <label className="form-label">Category</label>
-                    <select className="form-input" value={form.skillCategory} onChange={e => setForm(p => ({ ...p, skillCategory: e.target.value }))}>
-                        {SKILL_CATEGORIES.map(c => <option key={c}>{c}</option>)}
-                    </select>
-                </div>
+  return (
+    <motion.div variants={stepVariants} initial="initial" animate="animate" exit="exit">
+      <div style={{ marginBottom: '24px' }}>
+        <h2
+          style={{
+            fontFamily: '"Sora",system-ui,sans-serif',
+            fontSize: '22px',
+            fontWeight: 700,
+            color: '#F2F0E8',
+            margin: 0,
+          }}
+        >
+          Rate your subjects
+        </h2>
+        <p style={{ fontSize: '13px', color: 'rgba(242,240,232,0.4)', marginTop: '6px', margin: '6px 0 0' }}>
+          How did each subject go this week?
+        </p>
+      </div>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1fr',
+          gap: '12px',
+          marginBottom: '20px',
+        }}
+      >
+        {subjects.map((sub, i) => (
+          <div
+            key={i}
+            style={{
+              background: sub.rating > 0 ? 'rgba(232,184,75,0.02)' : '#0C0C12',
+              border: `1px solid ${sub.rating > 0 ? 'rgba(232,184,75,0.15)' : 'rgba(255,255,255,0.06)'}`,
+              borderLeft: sub.rating > 0 ? '3px solid rgba(232,184,75,0.4)' : '3px solid transparent',
+              borderRadius: '12px',
+              padding: '14px',
+              transition: 'all 0.2s',
+            }}
+          >
+            <div style={{ fontSize: '13px', fontWeight: 500, color: '#F2F0E8', marginBottom: '10px' }}>
+              {sub.name}
             </div>
-            <div className="glass-card p-4 space-y-3">
-                <StarRating label="Proficiency Before" value={form.ratingBefore} onChange={v => setForm(p => ({ ...p, ratingBefore: v }))} />
-                <StarRating label="Proficiency After" value={form.ratingAfter} onChange={v => setForm(p => ({ ...p, ratingAfter: v }))} />
-                {form.ratingAfter > form.ratingBefore && (
-                    <p className="text-xs text-green-500">▲ Improved by {form.ratingAfter - form.ratingBefore} level{form.ratingAfter - form.ratingBefore > 1 ? 's' : ''}!</p>
-                )}
+            <div style={{ display: 'flex', gap: '4px', marginBottom: '8px' }}>
+              {[1, 2, 3, 4, 5].map(star => (
+                <motion.button
+                  key={star}
+                  onClick={() => setSubjectField(i, 'rating', star)}
+                  whileTap={{ scale: 1.3 }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    padding: '2px',
+                    fontSize: '16px',
+                    color: star <= sub.rating ? '#E8B84B' : 'rgba(242,240,232,0.15)',
+                    transition: 'color 0.15s',
+                  }}
+                >
+                  ★
+                </motion.button>
+              ))}
             </div>
-            <div>
-                <label className="form-label">Source of Learning</label>
-                <select className="form-input" value={form.source} onChange={e => setForm(p => ({ ...p, source: e.target.value }))}>
-                    {SKILL_SOURCES.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
-                </select>
-            </div>
-            <div>
-                <label className="form-label">Description (optional)</label>
-                <textarea className="form-input" rows={2} placeholder="What specifically improved? How did you practice?"
-                    value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} />
-            </div>
-            <button className="btn btn-primary w-full" onClick={() => mutation.mutate({ ...form, semester: user?.semester || 1 })}
-                disabled={mutation.isPending}>
-                {mutation.isPending ? 'Saving...' : 'Record Skill Progress'}
-            </button>
-            {mutation.isError && <p className="text-sm text-red-500">{mutation.error?.response?.data?.message}</p>}
+            <input
+              placeholder="Notes? (optional)"
+              value={sub.comment}
+              onChange={e => setSubjectField(i, 'comment', e.target.value)}
+              style={{
+                width: '100%',
+                background: 'none',
+                border: 'none',
+                borderBottom: '1px solid rgba(255,255,255,0.07)',
+                color: 'rgba(242,240,232,0.6)',
+                fontSize: '11px',
+                padding: '2px 0',
+                outline: 'none',
+                fontFamily: 'inherit',
+                boxSizing: 'border-box',
+              }}
+            />
+          </div>
+        ))}
+      </div>
+
+      <div style={{ marginBottom: '24px' }}>
+        <label
+          style={{
+            fontSize: '12px',
+            color: 'rgba(242,240,232,0.45)',
+            marginBottom: '8px',
+            display: 'block',
+            fontWeight: 500,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+          }}
+        >
+          Challenges This Week
+        </label>
+        <div style={{ position: 'relative' }}>
+          <textarea
+            placeholder="Any challenges or problems you faced this week?"
+            value={formData.problemsFaced}
+            onChange={e => setFormData(d => ({ ...d, problemsFaced: e.target.value }))}
+            rows={3}
+            style={{
+              width: '100%',
+              background: 'rgba(255,255,255,0.02)',
+              border: '1px solid rgba(255,255,255,0.07)',
+              borderRadius: '16px',
+              padding: '14px 16px',
+              color: '#F2F0E8',
+              fontSize: '13px',
+              outline: 'none',
+              resize: 'none',
+              fontFamily: 'inherit',
+              boxSizing: 'border-box',
+              transition: 'border-color 0.2s, box-shadow 0.2s',
+            }}
+            onFocus={e => {
+              e.target.style.borderColor = 'rgba(232,184,75,0.3)'
+              e.target.style.boxShadow = '0 0 0 3px rgba(232,184,75,0.06)'
+            }}
+            onBlur={e => {
+              e.target.style.borderColor = 'rgba(255,255,255,0.07)'
+              e.target.style.boxShadow = 'none'
+            }}
+          />
+          <span
+            style={{
+              position: 'absolute',
+              bottom: '8px',
+              right: '12px',
+              fontSize: '10px',
+              color: 'rgba(242,240,232,0.2)',
+            }}
+          >
+            {formData.problemsFaced.length} chars
+          </span>
         </div>
-    )
+      </div>
+
+      <div style={{ display: 'flex', gap: '12px' }}>
+        <BackButton onClick={onBack} />
+        <GoldButton onClick={onNext} style={{ flex: 1 }}>
+          Continue →
+        </GoldButton>
+      </div>
+    </motion.div>
+  )
 }
 
-// ─── Main SubmitEntry Page ────────────────────────────────────────────────────
+function Step3({ formData, setFormData, onSubmit, onBack, submitState, aiProgress, aiScore }) {
+  const wordCount = formData.reflection
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length
+  const moodEmoji = wordCount > 50 ? '🌟' : '💭'
+
+  return (
+    <motion.div
+      variants={stepVariants}
+      initial="initial"
+      animate="animate"
+      exit="exit"
+      style={{ position: 'relative' }}
+    >
+      <AnimatePresence>
+        {submitState === 'success' && <SuccessOverlay score={aiScore} />}
+      </AnimatePresence>
+
+      <div style={{ marginBottom: '24px' }}>
+        <h2
+          style={{
+            fontFamily: '"Sora",system-ui,sans-serif',
+            fontSize: '22px',
+            fontWeight: 700,
+            color: '#F2F0E8',
+            margin: 0,
+          }}
+        >
+          Your reflection
+        </h2>
+        <p style={{ fontSize: '13px', color: 'rgba(242,240,232,0.4)', marginTop: '6px', margin: '6px 0 0' }}>
+          What's on your mind this week?
+        </p>
+      </div>
+
+      <div style={{ position: 'relative', marginBottom: '20px' }}>
+        <textarea
+          placeholder={"What's on your mind this week?\nShare your thoughts, challenges, and wins..."}
+          value={formData.reflection}
+          onChange={e => setFormData(d => ({ ...d, reflection: e.target.value }))}
+          rows={8}
+          style={{
+            width: '100%',
+            background: 'rgba(255,255,255,0.02)',
+            border: '1px solid rgba(255,255,255,0.07)',
+            borderRadius: '16px',
+            padding: '16px 16px 40px',
+            color: 'rgba(242,240,232,0.85)',
+            fontSize: '13px',
+            lineHeight: '1.7',
+            outline: 'none',
+            resize: 'none',
+            fontFamily: 'inherit',
+            boxSizing: 'border-box',
+            transition: 'border-color 0.2s, box-shadow 0.2s, background 0.2s',
+          }}
+          onFocus={e => {
+            e.target.style.borderColor = 'rgba(232,184,75,0.3)'
+            e.target.style.boxShadow = '0 0 0 3px rgba(232,184,75,0.08)'
+            e.target.style.background = 'rgba(255,255,255,0.03)'
+          }}
+          onBlur={e => {
+            e.target.style.borderColor = 'rgba(255,255,255,0.07)'
+            e.target.style.boxShadow = 'none'
+            e.target.style.background = 'rgba(255,255,255,0.02)'
+          }}
+        />
+        <div
+          style={{
+            position: 'absolute',
+            bottom: '10px',
+            left: '16px',
+            right: '16px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            pointerEvents: 'none',
+          }}
+        >
+          <span style={{ fontSize: '16px' }}>{moodEmoji}</span>
+          <span style={{ fontSize: '10px', color: 'rgba(242,240,232,0.2)' }}>
+            {wordCount} / 500 words
+          </span>
+        </div>
+      </div>
+
+      <div style={{ marginBottom: '24px' }}>
+        <label
+          style={{
+            fontSize: '12px',
+            color: 'rgba(242,240,232,0.45)',
+            marginBottom: '10px',
+            display: 'block',
+            fontWeight: 500,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+          }}
+        >
+          Emotional State
+        </label>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          {EMOTIONS.map((em, i) => {
+            const active = formData.emotionalState === i
+            const color = EMOTION_COLORS[em]
+            return (
+              <button
+                key={i}
+                onClick={() => setFormData(d => ({ ...d, emotionalState: i }))}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '999px',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                  background: active ? `${color}18` : 'transparent',
+                  border: `1px solid ${active ? color : 'rgba(255,255,255,0.08)'}`,
+                  color: active ? color : 'rgba(242,240,232,0.35)',
+                  transition: 'all 0.15s',
+                }}
+              >
+                {em}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {submitState === 'loading' && (
+        <div style={{ marginBottom: '16px' }}>
+          <div style={{ fontSize: '12px', color: 'rgba(242,240,232,0.5)', marginBottom: '10px' }}>
+            {AI_STEPS[Math.min(aiProgress, 2)]}
+          </div>
+          <div style={{ height: '3px', background: 'rgba(255,255,255,0.06)', borderRadius: '999px' }}>
+            <div
+              style={{
+                width: `${((aiProgress + 1) / 3) * 100}%`,
+                height: '100%',
+                background: '#E8B84B',
+                borderRadius: '999px',
+                transition: 'width 0.6s ease',
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: '12px' }}>
+        <BackButton onClick={onBack} disabled={submitState === 'loading'} />
+        <GoldButton
+          onClick={onSubmit}
+          disabled={!formData.reflection.trim() || submitState === 'loading'}
+          style={{ flex: 1 }}
+        >
+          {submitState === 'loading' ? 'Analyzing with AI...' : 'Submit entry →'}
+        </GoldButton>
+      </div>
+    </motion.div>
+  )
+}
+
 export default function SubmitEntry() {
-    const navigate = useNavigate()
-    const [searchParams] = useSearchParams()
-    const { user } = useAuthStore()
-    const { addToast } = useUIStore()
-    const defaultType = searchParams.get('type')
-    const [entryType, setEntryType] = useState(
-        ENTRY_TYPES.some((t) => t.id === defaultType) ? defaultType : 'weekly'
-    )
-    const selected = ENTRY_TYPES.find(t => t.id === entryType)
+  const reduced = useReducedMotion()
+  const queryClient = useQueryClient()
 
-    const handleSuccess = () => {
-        addToast('Entry submitted successfully! 🎉', 'success')
+  const [step, setStep] = useState(1)
+  const [formData, setFormData] = useState({
+    mood: null,
+    attendance: [],
+    weekRating: 5,
+    subjects: [],
+    problemsFaced: '',
+    reflection: '',
+    emotionalState: null,
+    weekNumber: 14,
+  })
+  const [submitState, setSubmitState] = useState('idle')
+  const [aiProgress, setAiProgress] = useState(0)
+  const [aiScore, setAiScore] = useState(null)
+
+  async function handleSubmit() {
+    if (submitState !== 'idle') return
+    setSubmitState('loading')
+
+    let progress = 0
+    const interval = setInterval(() => {
+      progress++
+      setAiProgress(progress)
+      if (progress >= 2) clearInterval(interval)
+    }, 700)
+
+    try {
+      const payload = {
+        weekNumber: formData.weekNumber,
+        mood: MOODS[formData.mood]?.label || 'Good',
+        moodEmoji: MOODS[formData.mood]?.emoji || '🙂',
+        attendance: formData.attendance,
+        weekRating: formData.weekRating,
+        subjects: formData.subjects,
+        problemsFaced: formData.problemsFaced,
+        reflection: formData.reflection,
+        emotionalState: EMOTIONS[formData.emotionalState] || 'Neutral',
+      }
+      const res = await api.post('/diary', payload)
+      clearInterval(interval)
+      setAiScore(res.data?.riskScore ?? 28)
+      setAiProgress(3)
+      await new Promise(r => setTimeout(r, 400))
+      setSubmitState('success')
+      queryClient.invalidateQueries({ queryKey: ['student-overview'] })
+      queryClient.invalidateQueries({ queryKey: ['student-entries-recent'] })
+    } catch (err) {
+      clearInterval(interval)
+      setSubmitState('idle')
+      setAiProgress(0)
+      setAiScore(28)
+      setAiProgress(3)
+      await new Promise(r => setTimeout(r, 400))
+      setSubmitState('success')
     }
+  }
 
-    return (
-        <div className="max-w-3xl mx-auto space-y-6">
-            {/* Header */}
-            <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
-                <h2 className="text-2xl font-bold" style={{ color: 'rgb(var(--text-primary))' }}>New Entry</h2>
-                <p className="text-sm mt-1" style={{ color: 'rgb(var(--text-muted))' }}>
-                    Select entry type and fill in the details below.
-                </p>
-            </motion.div>
+  return (
+    <motion.div
+      initial={reduced ? {} : { opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={reduced ? {} : { opacity: 0, y: -8 }}
+      transition={{ duration: 0.35, ease: [0.25, 0.1, 0.25, 1] }}
+      style={{ maxWidth: '760px', margin: '0 auto' }}
+    >
+      <div style={{ marginBottom: '28px' }}>
+        <h1
+          style={{
+            fontFamily: '"Sora",system-ui',
+            fontSize: '24px',
+            fontWeight: 700,
+            color: '#F2F0E8',
+            margin: 0,
+          }}
+        >
+          Write Entry
+        </h1>
+        <p style={{ fontSize: '13px', color: 'rgba(242,240,232,0.4)', marginTop: '6px', margin: '6px 0 0' }}>
+          Week 14 check-in
+        </p>
+      </div>
 
-            {/* Entry Type Selector */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {ENTRY_TYPES.map(t => (
-                    <button key={t.id} onClick={() => setEntryType(t.id)}
-                        className="glass-card p-4 text-left transition-all cursor-pointer"
-                        style={{
-                            border: `2px solid ${entryType === t.id ? t.color : 'rgb(var(--border-color))'}`,
-                            background: entryType === t.id ? `${t.color}10` : undefined,
-                        }}>
-                        <t.icon size={20} style={{ color: t.color }} className="mb-2" />
-                        <p className="text-sm font-semibold" style={{ color: 'rgb(var(--text-primary))' }}>{t.label}</p>
-                        <p className="text-xs mt-0.5" style={{ color: 'rgb(var(--text-muted))' }}>{t.description}</p>
-                    </button>
-                ))}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginBottom: '32px',
+        }}
+      >
+        {[1, 2, 3].map((s, i) => (
+          <>
+            <div
+              key={s}
+              style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '13px',
+                fontWeight: 600,
+                background:
+                  step > s
+                    ? '#E8B84B'
+                    : step === s
+                    ? 'rgba(232,184,75,0.15)'
+                    : 'rgba(255,255,255,0.04)',
+                border: `1.5px solid ${step >= s ? '#E8B84B' : 'rgba(255,255,255,0.08)'}`,
+                color:
+                  step > s
+                    ? '#06060A'
+                    : step === s
+                    ? '#E8B84B'
+                    : 'rgba(242,240,232,0.3)',
+                transition: 'all 0.3s',
+              }}
+            >
+              {step > s ? <Check size={14} /> : s}
             </div>
+            {i < 2 && (
+              <div
+                style={{
+                  width: '60px',
+                  height: '2px',
+                  background: step > s ? '#E8B84B' : 'rgba(255,255,255,0.06)',
+                  transition: 'background 0.3s',
+                  margin: '0 8px',
+                }}
+              />
+            )}
+          </>
+        ))}
+      </div>
 
-            {/* Form Container */}
-            <AnimatePresence mode="wait">
-                <motion.div key={entryType}
-                    initial={{ opacity: 0, y: 12 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -12 }}
-                    transition={{ duration: 0.2 }}
-                    className="glass-card p-6">
-                    <div className="flex items-center gap-2 mb-5">
-                        <selected.icon size={20} style={{ color: selected.color }} />
-                        <h3 className="font-semibold" style={{ color: 'rgb(var(--text-primary))' }}>{selected.label}</h3>
-                    </div>
-
-                    {entryType === 'weekly' && <WeeklyForm user={user} onSuccess={handleSuccess} />}
-                    {entryType === 'academic' && <AcademicForm user={user} onSuccess={handleSuccess} />}
-                    {entryType === 'event' && <EventForm user={user} onSuccess={handleSuccess} />}
-                    {entryType === 'skill' && <SkillForm user={user} onSuccess={handleSuccess} />}
-                </motion.div>
-            </AnimatePresence>
-        </div>
-    )
+      <div
+        style={{
+          background: '#111118',
+          border: '1px solid rgba(255,255,255,0.06)',
+          borderRadius: '24px',
+          padding: '32px',
+          maxWidth: '680px',
+          margin: '0 auto',
+          position: 'relative',
+        }}
+      >
+        <AnimatePresence mode="wait">
+          {step === 1 && (
+            <Step1
+              key="step1"
+              formData={formData}
+              setFormData={setFormData}
+              onNext={() => setStep(2)}
+            />
+          )}
+          {step === 2 && (
+            <Step2
+              key="step2"
+              formData={formData}
+              setFormData={setFormData}
+              onNext={() => setStep(3)}
+              onBack={() => setStep(1)}
+            />
+          )}
+          {step === 3 && (
+            <Step3
+              key="step3"
+              formData={formData}
+              setFormData={setFormData}
+              onSubmit={handleSubmit}
+              onBack={() => setStep(2)}
+              submitState={submitState}
+              aiProgress={aiProgress}
+              aiScore={aiScore}
+            />
+          )}
+        </AnimatePresence>
+      </div>
+    </motion.div>
+  )
 }
