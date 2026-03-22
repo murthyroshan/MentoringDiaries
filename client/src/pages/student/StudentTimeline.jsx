@@ -16,20 +16,17 @@ import api from '../../services/api'
 
 ChartJS.register(LineElement, CategoryScale, LinearScale, PointElement, Tooltip, Filler)
 
-// ── Demo fallback data ─────────────────────────────────────────────────────────
-const DEMO_ENTRIES = [
-  { _id:'1', week:14, mood:'😊', riskScore:23, reflection:'Productive week. All assignments submitted on time. Feeling great about progress.', createdAt:new Date().toISOString(), mentorComment:'Excellent work this week!' },
-  { _id:'2', week:13, mood:'🙂', riskScore:31, reflection:'Good week overall. Some challenges in CS but managed to resolve them.', createdAt:new Date(Date.now()-7*86400000).toISOString() },
-  { _id:'3', week:12, mood:'😐', riskScore:48, reflection:'Missed classes due to illness. Catching up on material.', createdAt:new Date(Date.now()-14*86400000).toISOString(), mentorComment:'Hope you feel better! Remember to rest.' },
-  { _id:'4', week:11, mood:'😊', riskScore:25, reflection:'Productive session with Dr. Reema. Submitted everything on time.', createdAt:new Date(Date.now()-21*86400000).toISOString() },
-  { _id:'5', week:10, mood:'😔', riskScore:72, reflection:'Difficult week with multiple overlapping deadlines.', createdAt:new Date(Date.now()-28*86400000).toISOString(), mentorComment:"Let's discuss time management in our next session." },
-  { _id:'6', week:9, mood:'🙂', riskScore:38, reflection:'Steady week, consistent attendance, completed lab reports.', createdAt:new Date(Date.now()-35*86400000).toISOString() },
-]
-
-const RISK_HISTORY  = [45,38,52,41,35,28,32,23,48,31,25,72,38,23]
-const WEEK_LABELS   = ['Wk 1','Wk 2','Wk 3','Wk 4','Wk 5','Wk 6','Wk 7','Wk 8','Wk 9','Wk 10','Wk 11','Wk 12','Wk 13','Wk 14']
-
 // ── Helpers ────────────────────────────────────────────────────────────────────
+function normalizeEntry(e) {
+  return {
+    ...e,
+    week: e.weekNumber ?? e.week,
+    riskScore: e.aiAnalysis?.riskScore ?? e.riskScore ?? 0,
+    mentorComment: e.mentorResponse?.content ?? e.mentorComment,
+    mood: e.moodEmoji ?? e.mood,
+  }
+}
+
 function getRiskColor(score) {
   if (score < 40) return '#3DD68C'
   if (score < 70) return '#F59E0B'
@@ -144,7 +141,17 @@ function TimelineCard({ entry, isExpanded, onToggle }) {
 }
 
 // ── Risk Chart ─────────────────────────────────────────────────────────────────
-function RiskChart() {
+function RiskChart({ entries }) {
+  const chartEntries = [...entries].reverse()
+  const labels = chartEntries.map(e => `Wk ${e.week}`)
+  const data   = chartEntries.map(e => e.riskScore)
+  const last   = data[data.length - 1] ?? 0
+  const prev   = data[data.length - 2] ?? last
+  const trend  = last <= prev ? '↓ Trending down' : '↑ Trending up'
+  const trendColor = last <= prev ? '#3DD68C' : '#EF4444'
+
+  if (entries.length === 0) return null
+
   return (
     <div style={{
       background:'#111118',
@@ -158,21 +165,21 @@ function RiskChart() {
         alignItems:'center', marginBottom:'14px',
       }}>
         <span style={{ fontSize:'14px', fontWeight:500, color:'rgba(242,240,232,0.7)' }}>
-          Risk Score — Last 14 Weeks
+          Risk Score Trend
         </span>
-        <span style={{ fontSize:'12px', color:'#3DD68C' }}>↓ Trending down</span>
+        <span style={{ fontSize:'12px', color:trendColor }}>{trend}</span>
       </div>
       <Line
         height={60}
         data={{
-          labels: WEEK_LABELS,
+          labels,
           datasets: [{
-            data: RISK_HISTORY,
+            data,
             borderColor: '#E8B84B',
             backgroundColor: 'rgba(232,184,75,0.06)',
             tension: 0.4,
             fill: true,
-            pointBackgroundColor: RISK_HISTORY.map(v => getRiskColor(v)),
+            pointBackgroundColor: data.map(v => getRiskColor(v)),
             pointRadius: 4,
             pointHoverRadius: 6,
             borderWidth: 1.5,
@@ -190,7 +197,7 @@ function RiskChart() {
               bodyColor: '#E8B84B',
               padding: 10,
               callbacks: {
-                title:  (items) => `Week ${items[0].dataIndex + 1}`,
+                title:  (items) => labels[items[0].dataIndex],
                 label:  (item)  => `Risk Score: ${item.raw}`,
               },
             },
@@ -278,15 +285,13 @@ export default function StudentTimeline() {
   const reduced = useReducedMotion()
   const [expandedId, setExpandedId] = useState(null)
 
-  const { data: rawEntries } = useQuery({
+  const { data: rawEntries, isLoading } = useQuery({
     queryKey: ['timeline-entries'],
     queryFn: () =>
-      api.get('/diary')
-        .then(r => r.data?.data || r.data?.entries || [])
-        .catch(() => DEMO_ENTRIES),
+      api.get('/diary').then(r => r.data?.data || r.data?.entries || []),
   })
 
-  const entries = Array.isArray(rawEntries) && rawEntries.length > 0 ? rawEntries : DEMO_ENTRIES
+  const entries = Array.isArray(rawEntries) ? rawEntries.map(normalizeEntry) : []
 
   return (
     <motion.div
@@ -308,15 +313,30 @@ export default function StudentTimeline() {
         </p>
       </div>
 
-      {/* Risk chart */}
-      <RiskChart />
+      {/* Risk chart — only shown when entries exist */}
+      <RiskChart entries={entries} />
+
+      {/* Empty state */}
+      {!isLoading && entries.length === 0 && (
+        <div style={{
+          padding:'60px', textAlign:'center', background:'#111118',
+          border:'1px solid rgba(255,255,255,0.06)', borderRadius:'24px',
+        }}>
+          <div style={{ fontSize:'32px', marginBottom:'12px' }}>📓</div>
+          <div style={{ fontSize:'14px', color:'rgba(242,240,232,0.4)' }}>
+            No entries yet. Submit your first diary entry to see your timeline.
+          </div>
+        </div>
+      )}
 
       {/* Vertical timeline */}
-      <VerticalTimeline
-        entries={entries}
-        expandedId={expandedId}
-        setExpandedId={setExpandedId}
-      />
+      {entries.length > 0 && (
+        <VerticalTimeline
+          entries={entries}
+          expandedId={expandedId}
+          setExpandedId={setExpandedId}
+        />
+      )}
     </motion.div>
   )
 }

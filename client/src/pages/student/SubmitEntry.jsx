@@ -6,6 +6,15 @@ import { useAuthStore } from '../../store/authStore'
 import api from '../../services/api'
 import { ChevronLeft, Check } from 'lucide-react'
 
+function getCurrentWeekNumber() {
+  const now = new Date()
+  const d = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()))
+  const dayNum = d.getUTCDay() || 7
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
+}
+
 const MOODS = [
   { emoji: '😔', label: 'Tough' },
   { emoji: '😐', label: 'Okay' },
@@ -163,23 +172,25 @@ function SuccessOverlay({ score }) {
       >
         Entry submitted!
       </h3>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px' }}>
-        <span style={{ fontSize: '14px', color: 'rgba(242,240,232,0.6)' }}>
-          AI Risk Score: {score ?? 28}
-        </span>
-        <span
-          style={{
-            padding: '2px 10px',
-            borderRadius: '999px',
-            fontSize: '12px',
-            background: 'rgba(61,214,140,0.1)',
-            color: '#3DD68C',
-            border: '1px solid rgba(61,214,140,0.2)',
-          }}
-        >
-          Low Risk
-        </span>
-      </div>
+      {score != null && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px' }}>
+          <span style={{ fontSize: '14px', color: 'rgba(242,240,232,0.6)' }}>
+            AI Risk Score: {score}
+          </span>
+          <span
+            style={{
+              padding: '2px 10px',
+              borderRadius: '999px',
+              fontSize: '12px',
+              background: score < 40 ? 'rgba(61,214,140,0.1)' : score < 70 ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
+              color: score < 40 ? '#3DD68C' : score < 70 ? '#F59E0B' : '#EF4444',
+              border: `1px solid ${score < 40 ? 'rgba(61,214,140,0.2)' : score < 70 ? 'rgba(245,158,11,0.2)' : 'rgba(239,68,68,0.2)'}`,
+            }}
+          >
+            {score < 40 ? 'Low Risk' : score < 70 ? 'Medium Risk' : 'High Risk'}
+          </span>
+        </div>
+      )}
       <p
         style={{
           fontSize: '13px',
@@ -230,7 +241,7 @@ function Step1({ formData, setFormData, onNext }) {
           How was your week?
         </h2>
         <p style={{ fontSize: '13px', color: 'rgba(242,240,232,0.4)', marginTop: '6px', margin: '6px 0 0' }}>
-          Week 14 &middot;{' '}
+          Week {formData.weekNumber} &middot;{' '}
           {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
         </p>
       </div>
@@ -707,7 +718,7 @@ export default function SubmitEntry() {
     problemsFaced: '',
     reflection: '',
     emotionalState: null,
-    weekNumber: 14,
+    weekNumber: getCurrentWeekNumber(),
   })
   const [submitState, setSubmitState] = useState('idle')
   const [aiProgress, setAiProgress] = useState(0)
@@ -738,20 +749,19 @@ export default function SubmitEntry() {
       }
       const res = await api.post('/diary', payload)
       clearInterval(interval)
-      setAiScore(res.data?.riskScore ?? 28)
+      const score = res.data?.data?.aiAnalysis?.riskScore ?? res.data?.aiAnalysis?.riskScore ?? res.data?.riskScore ?? null
+      setAiScore(score)
       setAiProgress(3)
       await new Promise(r => setTimeout(r, 400))
       setSubmitState('success')
       queryClient.invalidateQueries({ queryKey: ['student-overview'] })
-      queryClient.invalidateQueries({ queryKey: ['student-entries-recent'] })
+      queryClient.invalidateQueries({ queryKey: ['my-entries'] })
+      queryClient.invalidateQueries({ queryKey: ['timeline-entries'] })
+      queryClient.invalidateQueries({ queryKey: ['portfolio'] })
     } catch (err) {
       clearInterval(interval)
       setSubmitState('idle')
       setAiProgress(0)
-      setAiScore(28)
-      setAiProgress(3)
-      await new Promise(r => setTimeout(r, 400))
-      setSubmitState('success')
     }
   }
 
@@ -776,7 +786,7 @@ export default function SubmitEntry() {
           Write Entry
         </h1>
         <p style={{ fontSize: '13px', color: 'rgba(242,240,232,0.4)', marginTop: '6px', margin: '6px 0 0' }}>
-          Week 14 check-in
+          Week {formData.weekNumber} check-in
         </p>
       </div>
 

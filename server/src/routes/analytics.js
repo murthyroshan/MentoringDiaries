@@ -4,6 +4,7 @@ const {
     getOverview, getSentimentDistribution, getRiskDistribution,
     getEntryTrends, getInterventionResponseTime, getMentorEfficiency,
     getStudentOverview, getStudentGrowth, getStudentWeeklyInsights, getStudentWeeklyInsightsHistory,
+    getPortfolio,
     exportCSV, exportFlaggedCSV
 } = require('../controllers/analyticsController');
 const auth = require('../middleware/auth');
@@ -21,6 +22,7 @@ router.get('/student-overview', requireRole('student', 'mentor', 'admin'), getSt
 router.get('/student-growth', requireRole('student', 'mentor', 'admin'), getStudentGrowth);
 router.get('/student-weekly-insights', requireRole('student', 'mentor', 'admin'), getStudentWeeklyInsights);
 router.get('/student-weekly-insights/history', requireRole('student', 'mentor', 'admin'), getStudentWeeklyInsightsHistory);
+router.get('/portfolio', requireRole('student'), getPortfolio);
 router.get('/export/csv', requireRole('admin'), exportCSV);
 router.get('/export/flagged', requireRole('admin'), exportFlaggedCSV);
 

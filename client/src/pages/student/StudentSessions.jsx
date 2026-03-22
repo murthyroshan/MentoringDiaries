@@ -5,52 +5,20 @@ import { Video, Clock, CalendarDays, ChevronDown, ChevronUp, MapPin } from 'luci
 import { format, formatDistanceToNow, isPast, differenceInHours, differenceInMinutes } from 'date-fns'
 import api from '../../services/api'
 
-const DEMO_UPCOMING = [
-  {
-    _id: 'u1',
-    date: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
-    time: '3:00 PM',
-    mentorName: 'Dr. Reema Sharma',
-    mentorInitials: 'RS',
-    type: '1:1 Mentoring Session',
-    duration: '45 min',
-    mode: 'Online',
-    agenda: 'Review week 14 entry, discuss time management strategies, set goals for next month.',
-  },
-]
-
-const DEMO_PAST = [
-  {
-    _id: 'p1',
-    date: new Date(Date.now() - 7 * 86400000).toISOString(),
-    time: '3:00 PM',
-    mentorName: 'Dr. Reema Sharma',
-    type: '1:1 Mentoring Session',
-    duration: '45 min',
-    notes: 'Discussed academic performance. Student showing improvement. Focus on consistent attendance next week.',
-    actionItems: ['Complete all assignments by Friday', 'Attend all lab sessions', 'Submit week 13 entry'],
-  },
-  {
-    _id: 'p2',
-    date: new Date(Date.now() - 14 * 86400000).toISOString(),
-    time: '3:00 PM',
-    mentorName: 'Dr. Reema Sharma',
-    type: '1:1 Mentoring Session',
-    duration: '50 min',
-    notes: 'Reviewed semester progress. Risk score improving steadily. Discussed study techniques.',
-    actionItems: ['Create study schedule', 'Join peer study group'],
-  },
-  {
-    _id: 'p3',
-    date: new Date(Date.now() - 21 * 86400000).toISOString(),
-    time: '2:30 PM',
-    mentorName: 'Dr. Reema Sharma',
-    type: '1:1 Mentoring Session',
-    duration: '40 min',
-    notes: 'Initial check-in after high-risk week. Provided support and resources.',
-    actionItems: ['Visit student counselor', 'Reduce extracurricular load temporarily'],
-  },
-]
+function normalizeSession(s) {
+  const date = s.scheduledAt || s.date
+  return {
+    ...s,
+    date,
+    time: date ? new Date(date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : '',
+    mentorName: s.mentor?.name || s.mentorName || 'Your Mentor',
+    type: s.type || '1:1 Mentoring Session',
+    duration: s.duration || '45 min',
+    mode: s.mode || 'Online',
+    notes: s.mentorNotes || s.notes,
+    actionItems: s.actionItems || [],
+  }
+}
 
 function Countdown({ date }) {
   const hours = differenceInHours(new Date(date), new Date())
@@ -75,7 +43,7 @@ function Countdown({ date }) {
 }
 
 function UpcomingSessionCard({ session }) {
-  const sessionDate = new Date(session.date)
+  const sessionDate = new Date(session.date || session.scheduledAt)
   const isWithin24h = differenceInHours(sessionDate, new Date()) <= 24
 
   return (
@@ -273,19 +241,29 @@ export default function StudentSessions() {
 
   const { data: sessionsData, isLoading } = useQuery({
     queryKey: ['student-sessions'],
-    queryFn: () =>
-      api.get('/sessions').then(r => r.data).catch(() => ({ upcoming: DEMO_UPCOMING, past: DEMO_PAST })),
+    queryFn: () => api.get('/sessions').then(r => r.data),
   })
 
-  const upcoming =
-    sessionsData?.upcoming ||
-    sessionsData?.sessions?.filter(s => !isPast(new Date(s.date))) ||
-    DEMO_UPCOMING
+  const allSessions = (
+    sessionsData?.data || sessionsData?.sessions || sessionsData?.upcoming
+      ? [...(sessionsData?.upcoming || []), ...(sessionsData?.past || [])]
+      : Array.isArray(sessionsData)
+      ? sessionsData
+      : []
+  ).map(normalizeSession)
 
-  const past =
-    sessionsData?.past ||
-    sessionsData?.sessions?.filter(s => isPast(new Date(s.date))) ||
-    DEMO_PAST
+  const rawAll = sessionsData?.data || sessionsData?.sessions
+  const normalizedAll = Array.isArray(rawAll)
+    ? rawAll.map(normalizeSession)
+    : allSessions
+
+  const upcoming = sessionsData?.upcoming
+    ? sessionsData.upcoming.map(normalizeSession)
+    : normalizedAll.filter(s => s.date && !isPast(new Date(s.date)))
+
+  const past = sessionsData?.past
+    ? sessionsData.past.map(normalizeSession)
+    : normalizedAll.filter(s => s.date && isPast(new Date(s.date)))
 
   return (
     <motion.div

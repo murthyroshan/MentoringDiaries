@@ -18,54 +18,7 @@ import { ArrowRight, TrendingDown, Sparkles, Info } from 'lucide-react'
 
 ChartJS.register(LineElement, CategoryScale, LinearScale, PointElement, Tooltip, Filler)
 
-// ─── Demo / Fallback Data ────────────────────────────────────────────────────
-
-const DEMO_RISK_HISTORY = [45, 38, 52, 41, 35, 28, 32, 23]
-
-const DEMO_ENTRIES = [
-  {
-    _id: '1',
-    week: 14,
-    mood: '😊',
-    riskScore: 23,
-    riskLevel: 'low',
-    reflection:
-      'Had a productive week overall. Managed to complete all assignments on time and attended all classes.',
-    subjectCount: 4,
-    createdAt: new Date().toISOString(),
-    reviewStatus: 'reviewed',
-  },
-  {
-    _id: '2',
-    week: 13,
-    mood: '🙂',
-    riskScore: 31,
-    riskLevel: 'low',
-    reflection:
-      'Struggled a bit with the advanced topics in CS but got help from peers.',
-    subjectCount: 4,
-    createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-    reviewStatus: 'reviewed',
-  },
-  {
-    _id: '3',
-    week: 12,
-    mood: '😐',
-    riskScore: 48,
-    riskLevel: 'medium',
-    reflection:
-      'Missed two classes due to illness. Need to catch up on the material.',
-    subjectCount: 3,
-    createdAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(),
-    reviewStatus: 'pending',
-  },
-]
-
-const DEMO_SESSION = {
-  date: new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString(),
-  mentorName: 'Dr. Reema',
-  time: '3:00 PM',
-}
+// ─── No demo data — all values come from real API ────────────────────────────
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -153,26 +106,35 @@ export default function StudentDashboard() {
     retry: false,
   })
 
-  // ── Derived Data with Fallbacks ────────────────────────────────────────────
+  // ── Derived Data — mapped from actual API response shapes ──────────────────
+  // student-overview returns: { currentRiskScore, entriesThisMonth, streak,
+  //   weeklyActivity, entriesSubmitted, pendingMentorResponses, ... }
+  const ovData = overview?.data ?? overview ?? {}
+  const riskScore = ovData.currentRiskScore ?? 0
+  const entriesCount = ovData.entriesThisMonth ?? 0
+  const streak = ovData.streak ?? 0
+  const weeklyActivity = ovData.weeklyActivity ?? Array(7).fill(false)
 
-  const riskScore = overview?.currentRiskScore ?? 23
-  const entriesCount = overview?.entriesThisMonth ?? 6
-  const streak = overview?.streak ?? 4
-  const riskHistory = growth?.riskHistory ?? DEMO_RISK_HISTORY
+  // Build sparkline from recent diary entries (riskScore per entry)
+  const entries = Array.isArray(entriesData) ? entriesData : []
+  const riskHistory = entries.length > 0
+    ? [...entries].reverse().map(e => e.aiAnalysis?.riskScore ?? 0)
+    : []
 
-  const entries = Array.isArray(entriesData) && entriesData.length > 0 ? entriesData : DEMO_ENTRIES
-
-  const sessions = sessionsData?.sessions ?? (Array.isArray(sessionsData) ? sessionsData : [])
-  const nextSessionRaw = sessions.find((s) => new Date(s.date || s.scheduledAt) > new Date()) || null
+  // Sessions: API returns { success, data: [...], pagination }
+  const allSessions = Array.isArray(sessionsData?.data) ? sessionsData.data
+    : Array.isArray(sessionsData) ? sessionsData : []
+  const now = new Date()
+  const nextSessionRaw = allSessions.find((s) => new Date(s.scheduledAt || s.date) > now) || null
   const nextSession = nextSessionRaw
     ? {
-        date: nextSessionRaw.date || nextSessionRaw.scheduledAt,
-        mentorName: nextSessionRaw.mentorName || nextSessionRaw.mentor?.name || 'Dr. Reema',
-        time: nextSessionRaw.time || '3:00 PM',
+        date: nextSessionRaw.scheduledAt || nextSessionRaw.date,
+        mentorName: nextSessionRaw.mentor?.name || user?.assignedMentor?.name || 'Your Mentor',
+        time: nextSessionRaw.time || format(new Date(nextSessionRaw.scheduledAt || nextSessionRaw.date), 'h:mm a'),
       }
-    : DEMO_SESSION
+    : null
 
-  const mentorName = user?.mentorName || overview?.mentorName || 'Dr. Reema'
+  const mentorName = user?.assignedMentor?.name || 'Your Mentor'
   const mentorInitials = getInitials(mentorName).toUpperCase()
 
   const isLoading = overviewLoading || entriesLoading
@@ -343,17 +305,19 @@ export default function StudentDashboard() {
                     height: '24px',
                   }}
                 >
-                  {DEMO_RISK_HISTORY.map((v, i) => (
+                  {riskHistory.length > 0 ? riskHistory.map((v, i) => (
                     <div
                       key={i}
                       style={{
                         flex: 1,
                         borderRadius: '2px',
-                        height: `${(v / 100) * 24}px`,
-                        background: i === 7 ? getRiskColor(v) : `${getRiskColor(v)}40`,
+                        height: `${Math.max(2, (v / 100) * 24)}px`,
+                        background: i === riskHistory.length - 1 ? getRiskColor(v) : `${getRiskColor(v)}40`,
                       }}
                     />
-                  ))}
+                  )) : (
+                    <div style={{ fontSize: '11px', color: 'rgba(242,240,232,0.2)' }}>No data yet</div>
+                  )}
                 </div>
               </>
             )}
@@ -464,21 +428,15 @@ export default function StudentDashboard() {
                   week streak
                 </div>
                 <div style={{ display: 'flex', gap: '6px', marginTop: '12px' }}>
-                  {[...Array(7)].map((_, i) => (
+                  {weeklyActivity.map((active, i) => (
                     <div
                       key={i}
                       style={{
                         width: '20px',
                         height: '20px',
                         borderRadius: '50%',
-                        background:
-                          i < streak
-                            ? 'rgba(232,184,75,0.2)'
-                            : 'rgba(255,255,255,0.04)',
-                        border:
-                          i < streak
-                            ? '1px solid rgba(232,184,75,0.4)'
-                            : '1px solid rgba(255,255,255,0.08)',
+                        background: active ? 'rgba(232,184,75,0.2)' : 'rgba(255,255,255,0.04)',
+                        border: active ? '1px solid rgba(232,184,75,0.4)' : '1px solid rgba(255,255,255,0.08)',
                       }}
                     />
                   ))}

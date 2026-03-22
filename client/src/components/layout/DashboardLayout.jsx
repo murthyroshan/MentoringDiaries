@@ -6,6 +6,7 @@ import {
     LayoutDashboard, BookOpen, PlusCircle, BookMarked,
     Users, Flag, BarChart3, ShieldAlert, CalendarDays, UserCheck,
 } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import Sidebar from './Sidebar'
 import Navbar from './Navbar'
 import NotificationCenter from './NotificationCenter'
@@ -47,6 +48,7 @@ export default function DashboardLayout() {
     const { user } = useAuthStore()
     const location = useLocation()
     const { addNotification, hydrateNotifications, initialized } = useNotificationStore()
+    const queryClient = useQueryClient()
 
     const navItems = NAV_BY_ROLE[user?.role] || []
 
@@ -57,11 +59,26 @@ export default function DashboardLayout() {
     useEffect(() => {
         const socket = getSocket()
         if (!socket) return
-        const handler = (data) => addNotification(data)
+        const notifHandler = (data) => addNotification(data)
         const events = ['entry:submitted', 'entry:responded', 'entry:critical', 'system:announcement', 'session:update']
-        events.forEach(ev => socket.on(ev, handler))
-        return () => events.forEach(ev => socket.off(ev, handler))
-    }, [addNotification])
+        events.forEach(ev => socket.on(ev, notifHandler))
+
+        // Invalidate mentor/admin queries when new entries come in
+        const entryHandler = () => {
+            queryClient.invalidateQueries({ queryKey: ['mentor-students'] })
+            queryClient.invalidateQueries({ queryKey: ['mentor-flagged'] })
+            queryClient.invalidateQueries({ queryKey: ['admin-entries'] })
+            queryClient.invalidateQueries({ queryKey: ['admin-analytics'] })
+        }
+        socket.on('entry:submitted', entryHandler)
+        socket.on('entry:critical', entryHandler)
+
+        return () => {
+            events.forEach(ev => socket.off(ev, notifHandler))
+            socket.off('entry:submitted', entryHandler)
+            socket.off('entry:critical', entryHandler)
+        }
+    }, [addNotification, queryClient])
 
     return (
         <div className="flex h-screen overflow-hidden" style={{ background: 'rgb(var(--bg-primary))' }}>

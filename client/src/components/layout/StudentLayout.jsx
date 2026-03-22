@@ -5,6 +5,7 @@ import {
   LayoutDashboard, PenLine, BookOpen, TrendingUp,
   CalendarDays, Award, Bell, Search, Menu,
 } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../../store/authStore'
 import { useNotificationStore } from '../../store/notificationStore'
 import { useUIStore } from '../../store/uiStore'
@@ -143,6 +144,7 @@ export default function StudentLayout() {
   const location = useLocation()
   const navigate = useNavigate()
   const reducedMotion = useReducedMotion()
+  const queryClient = useQueryClient()
 
   const pageTitle = PAGE_TITLES[location.pathname] ?? 'Dashboard'
 
@@ -156,10 +158,27 @@ export default function StudentLayout() {
   useEffect(() => {
     const socket = getSocket()
     if (!socket) return
-    const handler = (data) => stableAdd(data)
-    SOCKET_EVENTS.forEach(ev => socket.on(ev, handler))
-    return () => { SOCKET_EVENTS.forEach(ev => socket.off(ev, handler)) }
-  }, [stableAdd])
+    const handler = (data) => {
+      stableAdd(data)
+      // Invalidate relevant queries when mentor responds to an entry
+      queryClient.invalidateQueries({ queryKey: ['my-entries'] })
+      queryClient.invalidateQueries({ queryKey: ['timeline-entries'] })
+      queryClient.invalidateQueries({ queryKey: ['student-overview'] })
+    }
+    socket.on('entry:responded', handler)
+    // Invalidate sessions on session update
+    const sessionHandler = () => queryClient.invalidateQueries({ queryKey: ['student-sessions'] })
+    socket.on('session:update', sessionHandler)
+    // Notification-only events
+    const notifHandler = (data) => stableAdd(data)
+    const notifEvents = ['entry:critical', 'system:announcement', 'entry:submitted']
+    notifEvents.forEach(ev => socket.on(ev, notifHandler))
+    return () => {
+      socket.off('entry:responded', handler)
+      socket.off('session:update', sessionHandler)
+      notifEvents.forEach(ev => socket.off(ev, notifHandler))
+    }
+  }, [stableAdd, queryClient])
 
   return (
     <div style={{
