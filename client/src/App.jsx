@@ -10,7 +10,7 @@ import { useUIStore } from './store/uiStore'
 import DashboardLayout from './components/layout/DashboardLayout'
 
 // Public Pages
-import LandingPage from './pages/LandingPage'
+import LandingPage from './pages/public/Landing'
 import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 
