@@ -1,6 +1,7 @@
 const Notification = require('../models/Notification');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
+const logger = require('../utils/logger');
 
 let io;
 const userSocketMap = {}; // userId -> socketId
@@ -19,11 +20,17 @@ function parseCookies(cookieHeader) {
     return cookies;
 }
 
+// Mirror the same origin-parsing logic as app.js so both layers stay in sync.
+const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5173')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+
 function initSocket(server) {
     const { Server } = require('socket.io');
     io = new Server(server, {
         cors: {
-            origin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
+            origin: allowedOrigins,
             methods: ['GET', 'POST'],
             credentials: true,
         },
@@ -56,14 +63,14 @@ function initSocket(server) {
     });
 
     io.on('connection', (socket) => {
-        console.log(`Socket connected: ${socket.id} (user: ${socket.userId})`);
+        logger.info({ socketId: socket.id, userId: socket.userId }, 'Socket connected');
 
         socket.on('join', (userId) => {
             // Only allow users to join their own room — prevents impersonation.
             if (userId && userId === socket.userId) {
                 socket.join(userId);
                 userSocketMap[userId] = socket.id;
-                console.log(`User ${userId} joined room`);
+                logger.info({ userId }, 'User joined socket room');
             }
         });
 
@@ -71,14 +78,14 @@ function initSocket(server) {
             // Only admins may join the admin broadcast room.
             if (socket.userRole !== 'admin') return;
             socket.join('admins');
-            console.log(`Admin ${socket.userId} joined admin room`);
+            logger.info({ userId: socket.userId }, 'Admin joined admin socket room');
         });
 
         socket.on('disconnect', () => {
             Object.keys(userSocketMap).forEach((key) => {
                 if (userSocketMap[key] === socket.id) delete userSocketMap[key];
             });
-            console.log(`Socket disconnected: ${socket.id}`);
+            logger.info({ socketId: socket.id }, 'Socket disconnected');
         });
     });
 
@@ -103,7 +110,7 @@ async function notifyUserWithPersistence(userId, payload) {
             metadata: payload.metadata || {},
         });
     } catch (error) {
-        console.error('Failed to persist notification:', error.message);
+        logger.error({ error: error.message, userId }, 'Failed to persist notification');
     }
 
     if (io) {

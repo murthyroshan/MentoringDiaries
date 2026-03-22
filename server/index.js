@@ -16,16 +16,23 @@ if (!process.env.JWT_REFRESH_SECRET || process.env.JWT_REFRESH_SECRET.length < 3
 }
 
 const server = http.createServer(app);
-
 initSocket(server);
-connectDB();
 
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-    logger.info({
-        port: PORT,
-        env: process.env.NODE_ENV || 'development',
-    }, 'Mentoring Diaries server started');
-});
+
+// Connect to DB first; only start accepting traffic once the connection is ready.
+connectDB()
+    .then(() => {
+        server.listen(PORT, () => {
+            logger.info({
+                port: PORT,
+                env: process.env.NODE_ENV || 'development',
+            }, 'Mentoring Diaries server started');
+        });
+    })
+    .catch((err) => {
+        logger.error({ error: err.message }, 'Failed to connect to DB — server not started');
+        process.exit(1);
+    });
 
 module.exports = app;

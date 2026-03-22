@@ -1,31 +1,46 @@
 const mongoose = require('mongoose');
+const logger = require('../utils/logger');
 
 const MAX_RETRIES = 5;
 const RETRY_DELAY_MS = 3000;
 
-const connectDB = async (retries = MAX_RETRIES) => {
-    try {
-        const conn = await mongoose.connect(process.env.MONGO_URI);
-        console.log(`✅ MongoDB connected: ${conn.connection.host}`);
+/**
+ * Connect to MongoDB with exponential-style retry.
+ * Returns a Promise that resolves once the first successful connection is made,
+ * or rejects (and exits the process) after MAX_RETRIES failures.
+ */
+const connectDB = () =>
+    new Promise((resolve, reject) => {
+        let retries = MAX_RETRIES;
 
-        mongoose.connection.on('disconnected', () => {
-            console.warn('⚠️  MongoDB disconnected. Attempting reconnect...');
-            setTimeout(() => connectDB(1), RETRY_DELAY_MS);
-        });
+        const attempt = async () => {
+            try {
+                const conn = await mongoose.connect(process.env.MONGO_URI);
+                logger.info({ host: conn.connection.host }, 'MongoDB connected');
 
-        mongoose.connection.on('error', (err) => {
-            console.error('❌ MongoDB error:', err.message);
-        });
-    } catch (error) {
-        console.error(`❌ MongoDB connection error: ${error.message}`);
-        if (retries > 0) {
-            console.log(`🔄 Retrying in ${RETRY_DELAY_MS / 1000}s... (${retries} retries left)`);
-            setTimeout(() => connectDB(retries - 1), RETRY_DELAY_MS);
-        } else {
-            console.error('💀 MongoDB connection failed after max retries. Exiting.');
-            process.exit(1);
-        }
-    }
-};
+                mongoose.connection.on('disconnected', () => {
+                    logger.warn('MongoDB disconnected — attempting reconnect');
+                    setTimeout(() => attempt(), RETRY_DELAY_MS);
+                });
+
+                mongoose.connection.on('error', (err) => {
+                    logger.error({ error: err.message }, 'MongoDB runtime error');
+                });
+
+                resolve();
+            } catch (error) {
+                logger.error({ error: error.message, retriesLeft: retries - 1 }, 'MongoDB connection failed');
+                if (retries-- > 0) {
+                    logger.info({ retryInMs: RETRY_DELAY_MS }, 'Retrying DB connection');
+                    setTimeout(attempt, RETRY_DELAY_MS);
+                } else {
+                    logger.error('MongoDB max retries exceeded — exiting');
+                    process.exit(1);
+                }
+            }
+        };
+
+        attempt();
+    });
 
 module.exports = connectDB;

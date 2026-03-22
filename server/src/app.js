@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const cors = require('cors');
+const mongoose = require('mongoose');
 const cookieParser = require('cookie-parser');
 const helmet = require('helmet');
 const compression = require('compression');
@@ -36,8 +37,34 @@ app.set('trust proxy', 1);
 app.use(requestId);
 app.use(responseEnvelope);
 
+const isProd = process.env.NODE_ENV === 'production';
+
+const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5173')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+
 app.use(helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
+    // HSTS: tell browsers to always use HTTPS — production only so local dev still works over HTTP.
+    hsts: isProd
+        ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+        : false,
+    // CSP: tightened in production; disabled in dev so Vite HMR inlined scripts are not blocked.
+    contentSecurityPolicy: isProd ? {
+        directives: {
+            defaultSrc:     ["'self'"],
+            scriptSrc:      ["'self'"],
+            styleSrc:       ["'self'", "'unsafe-inline'"],
+            imgSrc:         ["'self'", 'data:', 'https:'],
+            connectSrc:     ["'self'", ...allowedOrigins],
+            fontSrc:        ["'self'"],
+            objectSrc:      ["'none'"],
+            frameSrc:       ["'none'"],
+            upgradeInsecureRequests: [],
+        },
+    } : false,
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 }));
 
 app.use(compression({
@@ -47,11 +74,6 @@ app.use(compression({
         return compression.filter(req, res);
     },
 }));
-
-const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5173')
-    .split(',')
-    .map((o) => o.trim())
-    .filter(Boolean);
 
 app.use(cors({
     origin(origin, callback) {
@@ -93,7 +115,15 @@ app.use(requestLogger);
 app.use('/api', csrf);
 
 app.get('/api/health', (req, res) => {
-    res.json({ success: true, message: 'Mentoring Diaries API is running', timestamp: new Date() });
+    const dbState = mongoose.connection.readyState; // 0=disconnected 1=connected 2=connecting 3=disconnecting
+    const db = dbState === 1 ? 'connected' : dbState === 2 ? 'connecting' : 'disconnected';
+    const ok = dbState === 1;
+    res.status(ok ? 200 : 503).json({
+        status:    ok ? 'ok' : 'degraded',
+        uptime:    process.uptime(),
+        timestamp: new Date(),
+        db,
+    });
 });
 
 // Protected file endpoint — auth required; user must own the entry or be admin/mentor.
@@ -131,9 +161,21 @@ app.use('/api/student', studentRoutes);
 app.use('/api/sessions', sessionRoutes);
 app.use('/api/notifications', notificationRoutes);
 
-app.use('*', (req, res) => {
-    res.status(404).json({ success: false, message: 'Route not found' });
-});
+// In production, serve the built React client from ../public (populated by the Dockerfile).
+// In development, Vite runs on its own port so this block is skipped.
+if (isProd) {
+    const clientBuildPath = path.resolve(__dirname, '../public');
+    app.use(express.static(clientBuildPath));
+    // SPA catch-all: any non-API, non-upload path returns index.html for React Router.
+    app.get('*', (req, res, next) => {
+        if (req.path.startsWith('/api/') || req.path.startsWith('/uploads/')) return next();
+        res.sendFile(path.join(clientBuildPath, 'index.html'));
+    });
+} else {
+    app.use('*', (req, res) => {
+        res.status(404).json({ success: false, message: 'Route not found' });
+    });
+}
 
 app.use(errorHandler);
 
