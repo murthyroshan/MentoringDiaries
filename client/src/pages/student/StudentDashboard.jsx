@@ -149,7 +149,7 @@ export default function StudentDashboard() {
 
   const { data: entriesData, isLoading: entriesLoading } = useQuery({
     queryKey: ['student-entries-recent'],
-    queryFn: () => api.get('/diary?limit=3').then((r) => r.data),
+    queryFn: () => api.get('/diary?limit=3').then((r) => r.data?.data || r.data?.entries || []),
     retry: false,
   })
 
@@ -160,8 +160,7 @@ export default function StudentDashboard() {
   const streak = overview?.streak ?? 4
   const riskHistory = growth?.riskHistory ?? DEMO_RISK_HISTORY
 
-  const rawEntries = entriesData?.entries ?? entriesData
-  const entries = Array.isArray(rawEntries) && rawEntries.length > 0 ? rawEntries : DEMO_ENTRIES
+  const entries = Array.isArray(entriesData) && entriesData.length > 0 ? entriesData : DEMO_ENTRIES
 
   const sessions = sessionsData?.sessions ?? (Array.isArray(sessionsData) ? sessionsData : [])
   const nextSessionRaw = sessions.find((s) => new Date(s.date || s.scheduledAt) > new Date()) || null

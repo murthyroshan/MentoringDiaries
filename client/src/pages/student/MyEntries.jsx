@@ -322,11 +322,11 @@ export default function MyEntries() {
     queryKey: ['my-entries'],
     queryFn: () =>
       api.get('/diary')
-        .then(r => r.data?.entries || r.data)
+        .then(r => r.data?.data || r.data?.entries || [])
         .catch(() => DEMO_ENTRIES),
   })
 
-  const entries = rawEntries || DEMO_ENTRIES
+  const entries = Array.isArray(rawEntries) && rawEntries.length > 0 ? rawEntries : DEMO_ENTRIES
 
   const filtered = entries.filter(e => {
     if (filter === 'this-month') {

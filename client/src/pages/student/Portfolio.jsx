@@ -326,7 +326,7 @@ export default function Portfolio() {
           gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))',
           gap: '12px',
         }}>
-          {data.recentEntries.map((entry, i) => (
+          {(data.recentEntries ?? []).map((entry, i) => (
             <motion.div
               key={entry._id}
               initial={{ opacity: 0, y: 8 }}

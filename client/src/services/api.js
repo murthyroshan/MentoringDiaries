@@ -90,4 +90,15 @@ api.interceptors.response.use(
     }
 )
 
+// Safely extract an array from any API response shape.
+// Tries each key in order; falls back to [] if nothing is an array.
+export const extractArray = (response, keys = ['data', 'entries', 'users', 'sessions', 'results']) => {
+    if (!response) return []
+    if (Array.isArray(response)) return response
+    for (const key of keys) {
+        if (Array.isArray(response[key])) return response[key]
+    }
+    return []
+}
+
 export default api
