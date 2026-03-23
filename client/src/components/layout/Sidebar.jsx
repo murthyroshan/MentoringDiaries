@@ -101,7 +101,7 @@ function NavItem({ icon: Icon, label, path, isCollapsed, onClick }) {
   const itemRef = useRef(null)
   const location = useLocation()
 
-  const isExact = ['/dashboard', '/mentor', '/admin'].includes(path)
+  const isExact = ['/student/dashboard', '/mentor/dashboard', '/admin/dashboard'].includes(path)
   const isActive = isExact
     ? location.pathname === path
     : location.pathname === path || location.pathname.startsWith(path + '/')
@@ -207,6 +207,17 @@ export default function Sidebar({ navItems = [] }) {
     try { return localStorage.getItem('sidebar-collapsed') === 'true' } catch { return false }
   })
 
+  // One-time reset: clear any stale collapsed state from old sidebar version
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem('sidebar-v2')) {
+        localStorage.removeItem('sidebar-collapsed')
+        localStorage.setItem('sidebar-v2', 'true')
+        setIsCollapsed(false)
+      }
+    } catch {}
+  }, [])
+
   // Track viewport breakpoint
   useEffect(() => {
     const handler = () => setIsMobile(window.innerWidth < 1024)
@@ -284,7 +295,9 @@ export default function Sidebar({ navItems = [] }) {
           borderRight: `1px solid ${C.border}`,
           display: 'flex',
           flexDirection: 'column',
-          overflow: 'hidden',
+          // Desktop: 'visible' so the collapse toggle (right:-12px) isn't clipped.
+          // Each inner section has its own overflow:hidden for content clipping.
+          overflow: isMobile ? 'hidden' : 'visible',
         }}
       >
         {/* Collapse toggle — desktop only */}

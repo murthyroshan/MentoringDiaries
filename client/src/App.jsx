@@ -47,7 +47,7 @@ function ProtectedRoute({ children, allowedRoles }) {
   const { isAuthenticated, user } = useAuthStore()
   if (!isAuthenticated) return <Navigate to="/login" replace />
   if (allowedRoles && !allowedRoles.includes(user?.role)) {
-    const redirects = { student: '/dashboard', mentor: '/mentor', admin: '/admin' }
+    const redirects = { student: '/student/dashboard', mentor: '/mentor/dashboard', admin: '/admin/dashboard' }
     return <Navigate to={redirects[user?.role] || '/login'} replace />
   }
   return children
@@ -56,36 +56,47 @@ function ProtectedRoute({ children, allowedRoles }) {
 function PublicRoute({ children }) {
   const { isAuthenticated, user } = useAuthStore()
   if (isAuthenticated) {
-    const redirects = { student: '/dashboard', mentor: '/mentor', admin: '/admin' }
-    return <Navigate to={redirects[user?.role] || '/dashboard'} replace />
+    const redirects = { student: '/student/dashboard', mentor: '/mentor/dashboard', admin: '/admin/dashboard' }
+    return <Navigate to={redirects[user?.role] || '/student/dashboard'} replace />
   }
   return children
 }
 
 function AnimatedRoutes() {
   const location = useLocation()
+  const { isAuthenticated, user } = useAuthStore()
   return (
     <AnimatePresence mode="wait">
       <Routes location={location} key={location.key}>
-        {/* Public */}
-        <Route path="/" element={<LandingPage />} />
+        {/* Public — root redirects by role when logged in */}
+        <Route path="/" element={
+          isAuthenticated
+            ? <Navigate to={`/${user?.role}/dashboard`} replace />
+            : <LandingPage />
+        } />
+        {/* Legacy /dashboard catch */}
+        <Route path="/dashboard" element={
+          isAuthenticated
+            ? <Navigate to={`/${user?.role}/dashboard`} replace />
+            : <Navigate to="/login" replace />
+        } />
         <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
         <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
 
         {/* Student */}
         <Route element={<ProtectedRoute allowedRoles={['student']}><StudentLayout /></ProtectedRoute>}>
-          <Route path="/dashboard" element={<StudentDashboard />} />
-          <Route path="/submit" element={<SubmitEntry />} />
-          <Route path="/my-entries" element={<MyEntries />} />
-          <Route path="/timeline" element={<StudentTimeline />} />
-          <Route path="/sessions" element={<StudentSessions />} />
-          <Route path="/portfolio" element={<Portfolio />} />
-          <Route path="/entries/:id" element={<EntryDetail />} />
+          <Route path="/student/dashboard" element={<StudentDashboard />} />
+          <Route path="/student/submit" element={<SubmitEntry />} />
+          <Route path="/student/entries" element={<MyEntries />} />
+          <Route path="/student/timeline" element={<StudentTimeline />} />
+          <Route path="/student/sessions" element={<StudentSessions />} />
+          <Route path="/student/portfolio" element={<Portfolio />} />
+          <Route path="/student/entries/:id" element={<EntryDetail />} />
         </Route>
 
         {/* Mentor */}
         <Route element={<ProtectedRoute allowedRoles={['mentor']}><DashboardLayout /></ProtectedRoute>}>
-          <Route path="/mentor" element={<MentorDashboard />} />
+          <Route path="/mentor/dashboard" element={<MentorDashboard />} />
           <Route path="/mentor/students" element={<StudentsList />} />
           <Route path="/mentor/sessions" element={<MentorSessions />} />
           <Route path="/mentor/entries" element={<MentorEntries />} />
@@ -93,15 +104,19 @@ function AnimatedRoutes() {
           <Route path="/mentor/flagged" element={<FlaggedEntries />} />
           <Route path="/mentor/entries/:id" element={<EntryDetail />} />
         </Route>
+        {/* Legacy /mentor redirect */}
+        <Route path="/mentor" element={<Navigate to="/mentor/dashboard" replace />} />
 
         {/* Admin */}
         <Route element={<ProtectedRoute allowedRoles={['admin']}><DashboardLayout /></ProtectedRoute>}>
-          <Route path="/admin" element={<AdminDashboard />} />
+          <Route path="/admin/dashboard" element={<AdminDashboard />} />
           <Route path="/admin/users" element={<UserManagement />} />
           <Route path="/admin/entries" element={<AllEntries />} />
           <Route path="/admin/risk-monitor" element={<RiskMonitor />} />
           <Route path="/admin/entries/:id" element={<EntryDetail />} />
         </Route>
+        {/* Legacy /admin redirect */}
+        <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
 
         <Route path="*" element={<NotFoundPage />} />
       </Routes>

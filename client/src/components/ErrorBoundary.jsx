@@ -41,7 +41,7 @@ class ErrorBoundary extends React.Component {
                 Reload Application
               </button>
               <button
-                onClick={() => { window.location.href = '/dashboard' }}
+                onClick={() => { window.location.href = '/' }}
                 className="bg-slate-700/50 text-slate-300 font-semibold border border-slate-600/50 px-6 py-3 rounded-xl hover:bg-slate-700 hover:scale-[1.02] transition-all"
               >
                 Go to Dashboard

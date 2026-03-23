@@ -25,7 +25,7 @@ export default function EntryDetail() {
     // Determine back link by role
     const backLink = user?.role === 'admin' ? '/admin/entries'
         : user?.role === 'mentor' ? '/mentor/students'
-            : '/my-entries'
+            : '/student/entries'
 
     if (isLoading) {
         return (

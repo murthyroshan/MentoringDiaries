@@ -203,7 +203,7 @@ function SuccessOverlay({ score }) {
       </p>
       <ConfettiBurst />
       <button
-        onClick={() => navigate('/my-entries')}
+        onClick={() => navigate('/student/entries')}
         style={{
           marginTop: '24px',
           padding: '12px 28px',

@@ -22,6 +22,21 @@ ChartJS.register(LineElement, CategoryScale, LinearScale, PointElement, Tooltip,
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+function getCurrentWeekNumber() {
+  const d = new Date()
+  const oneJan = new Date(d.getFullYear(), 0, 1)
+  return Math.ceil(((d - oneJan) / 86400000 + oneJan.getDay() + 1) / 7)
+}
+
+const MOOD_EMOJI = {
+  amazing: '🤩', great: '😊', good: '🙂',
+  okay: '😐', tough: '😔',
+  5: '🤩', 4: '😊', 3: '🙂', 2: '😐', 1: '😔',
+}
+function getMoodEmoji(mood) {
+  return MOOD_EMOJI[mood] ?? (mood && String(mood).length <= 2 ? mood : '😐')
+}
+
 function getGreeting() {
   const h = new Date().getHours()
   if (h < 12) return 'Good morning'
@@ -110,16 +125,20 @@ export default function StudentDashboard() {
   // student-overview returns: { currentRiskScore, entriesThisMonth, streak,
   //   weeklyActivity, entriesSubmitted, pendingMentorResponses, ... }
   const ovData = overview?.data ?? overview ?? {}
-  const riskScore = ovData.currentRiskScore ?? 0
+  const riskScore = ovData.currentRiskScore ?? null  // null = no entries yet
   const entriesCount = ovData.entriesThisMonth ?? 0
   const streak = ovData.streak ?? 0
   const weeklyActivity = ovData.weeklyActivity ?? Array(7).fill(false)
+  const currentWeek = ovData.currentWeek ?? getCurrentWeekNumber()
+  const statusText = entriesCount > 0 ? "You're on track this semester" : 'Submit your first entry to get started'
 
   // Build sparkline from recent diary entries (riskScore per entry)
   const entries = Array.isArray(entriesData) ? entriesData : []
-  const riskHistory = entries.length > 0
-    ? [...entries].reverse().map(e => e.aiAnalysis?.riskScore ?? 0)
-    : []
+  const reversedEntries = entries.length > 0 ? [...entries].reverse() : []
+  const riskHistory = reversedEntries.map(e => e.aiAnalysis?.riskScore ?? 0)
+  const riskLabels = reversedEntries.map(e =>
+    e.week ? `Wk ${e.week}` : format(new Date(e.startDate || e.createdAt), 'MMM d')
+  )
 
   // Sessions: API returns { success, data: [...], pagination }
   const allSessions = Array.isArray(sessionsData?.data) ? sessionsData.data
@@ -142,7 +161,7 @@ export default function StudentDashboard() {
   // ── Chart Config ───────────────────────────────────────────────────────────
 
   const chartData = {
-    labels: ['Wk 7', 'Wk 8', 'Wk 9', 'Wk 10', 'Wk 11', 'Wk 12', 'Wk 13', 'Wk 14'],
+    labels: riskLabels.length > 0 ? riskLabels : ['Wk 1', 'Wk 2', 'Wk 3', 'Wk 4', 'Wk 5', 'Wk 6', 'Wk 7', 'Wk 8'],
     datasets: [
       {
         data: riskHistory,
@@ -173,16 +192,16 @@ export default function StudentDashboard() {
     },
     scales: {
       x: {
-        grid: { color: 'rgba(255,255,255,0.04)' },
-        ticks: { color: 'rgba(242,240,232,0.25)', font: { size: 10 } },
+        grid: { display: false },
+        ticks: { color: 'rgba(242,240,232,0.25)', font: { size: 11 } },
         border: { color: 'transparent' },
       },
       y: {
-        grid: { color: 'rgba(255,255,255,0.04)' },
-        ticks: { color: 'rgba(242,240,232,0.25)', font: { size: 10 } },
-        border: { color: 'transparent' },
         min: 0,
         max: 100,
+        grid: { color: 'rgba(255,255,255,0.04)' },
+        ticks: { stepSize: 20, color: 'rgba(242,240,232,0.25)', font: { size: 11 } },
+        border: { color: 'transparent' },
       },
     },
   }
@@ -219,7 +238,7 @@ export default function StudentDashboard() {
               {getGreeting()}, {firstName} 👋
             </h1>
             <p style={{ fontSize: '13px', color: 'rgba(242,240,232,0.4)', margin: '6px 0 0' }}>
-              Week 14 · You're on track this semester
+              Week {currentWeek} · {statusText}
             </p>
           </div>
           <span style={{ fontSize: '12px', color: 'rgba(242,240,232,0.2)', marginTop: '4px' }}>
@@ -266,36 +285,42 @@ export default function StudentDashboard() {
                   style={{
                     fontSize: '42px',
                     fontWeight: 900,
-                    color: getRiskColor(riskScore),
+                    color: riskScore !== null ? getRiskColor(riskScore) : 'rgba(242,240,232,0.25)',
                     lineHeight: 1,
                   }}
                 >
-                  {riskScore}
+                  {riskScore !== null ? riskScore : '—'}
                 </div>
-                <div
-                  style={{
-                    marginTop: '8px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  <span
+                {riskScore !== null ? (
+                  <div
                     style={{
-                      fontSize: '11px',
-                      padding: '2px 8px',
-                      borderRadius: '999px',
-                      background: `${getRiskColor(riskScore)}15`,
-                      color: getRiskColor(riskScore),
-                      border: `1px solid ${getRiskColor(riskScore)}30`,
+                      marginTop: '8px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      flexWrap: 'wrap',
                     }}
                   >
-                    {getRiskLabel(riskScore)}
-                  </span>
-                  <TrendingDown size={13} style={{ color: '#3DD68C' }} />
-                  <span style={{ fontSize: '11px', color: '#3DD68C' }}>Improving</span>
-                </div>
+                    <span
+                      style={{
+                        fontSize: '11px',
+                        padding: '2px 8px',
+                        borderRadius: '999px',
+                        background: `${getRiskColor(riskScore)}15`,
+                        color: getRiskColor(riskScore),
+                        border: `1px solid ${getRiskColor(riskScore)}30`,
+                      }}
+                    >
+                      {getRiskLabel(riskScore)}
+                    </span>
+                    <TrendingDown size={13} style={{ color: '#3DD68C' }} />
+                    <span style={{ fontSize: '11px', color: '#3DD68C' }}>Improving</span>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '12px', color: 'rgba(242,240,232,0.25)', marginTop: '8px' }}>
+                    No entries yet
+                  </div>
+                )}
                 <div
                   style={{
                     display: 'flex',
@@ -554,7 +579,7 @@ export default function StudentDashboard() {
                 Recent Entries
               </span>
               <button
-                onClick={() => navigate('/my-entries')}
+                onClick={() => navigate('/student/entries')}
                 style={{
                   background: 'none',
                   border: 'none',
@@ -592,7 +617,12 @@ export default function StudentDashboard() {
                 </div>
               ))
             ) : (
-              entries.slice(0, 3).map((entry, i) => (
+              entries.slice(0, 3).map((entry, i) => {
+                const entryRisk = entry.aiAnalysis?.riskScore ?? 0
+                const entryLabel = entry.week
+                  ? `Week ${entry.week}`
+                  : format(new Date(entry.startDate || entry.createdAt), 'MMM d')
+                return (
                 <motion.div
                   key={entry._id}
                   initial={reduced ? {} : { opacity: 0, y: 12 }}
@@ -607,7 +637,7 @@ export default function StudentDashboard() {
                     marginBottom: '12px',
                     cursor: 'pointer',
                   }}
-                  onClick={() => navigate('/my-entries')}
+                  onClick={() => navigate('/student/entries')}
                 >
                   {/* Top row */}
                   <div
@@ -630,9 +660,9 @@ export default function StudentDashboard() {
                         fontWeight: 500,
                       }}
                     >
-                      Week {entry.week}
+                      {entryLabel}
                     </span>
-                    <span style={{ fontSize: '24px' }}>{entry.mood || '🙂'}</span>
+                    <span style={{ fontSize: '24px' }}>{getMoodEmoji(entry.mood)}</span>
                     <span
                       style={{
                         marginLeft: 'auto',
@@ -647,12 +677,12 @@ export default function StudentDashboard() {
                         fontSize: '10px',
                         padding: '2px 8px',
                         borderRadius: '999px',
-                        background: `${getRiskColor(entry.riskScore)}15`,
-                        color: getRiskColor(entry.riskScore),
-                        border: `1px solid ${getRiskColor(entry.riskScore)}25`,
+                        background: `${getRiskColor(entryRisk)}15`,
+                        color: getRiskColor(entryRisk),
+                        border: `1px solid ${getRiskColor(entryRisk)}25`,
                       }}
                     >
-                      {getRiskLabel(entry.riskScore)}
+                      {getRiskLabel(entryRisk)}
                     </span>
                   </div>
 
@@ -669,7 +699,7 @@ export default function StudentDashboard() {
                       lineHeight: 1.5,
                     }}
                   >
-                    {entry.reflection}
+                    {entry.content || ''}
                   </p>
 
                   {/* Bottom row */}
@@ -682,12 +712,13 @@ export default function StudentDashboard() {
                     }}
                   >
                     <span style={{ fontSize: '11px', color: 'rgba(242,240,232,0.3)' }}>
-                      {entry.subjectCount || 4} subjects rated
+                      {entry.subjectRatings?.length ?? 0} subjects rated
                     </span>
                     <span style={{ fontSize: '11px', color: '#E8B84B' }}>View entry →</span>
                   </div>
                 </motion.div>
-              ))
+                )
+              })
             )}
 
             {/* AI Insights */}
@@ -885,7 +916,7 @@ export default function StudentDashboard() {
                 3 days ago
               </div>
               <button
-                onClick={() => navigate('/my-entries')}
+                onClick={() => navigate('/student/entries')}
                 style={{
                   marginTop: '12px',
                   background: 'none',

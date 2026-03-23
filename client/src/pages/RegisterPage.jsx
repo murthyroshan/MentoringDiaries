@@ -83,8 +83,8 @@ export default function RegisterPage() {
             const res = await api.post('/auth/register', payload)
             login(res.data.user)
             addToast(`Account created! Welcome, ${res.data.user.name}!`, 'success')
-            const redirects = { student: '/dashboard', mentor: '/mentor', admin: '/admin' }
-            navigate(redirects[res.data.user.role] || '/dashboard')
+            const redirects = { student: '/student/dashboard', mentor: '/mentor/dashboard', admin: '/admin/dashboard' }
+            navigate(redirects[res.data.user.role] || '/student/dashboard')
         } catch (err) {
             const details = err.response?.data?.details
             if (Array.isArray(details) && details.length > 0) {

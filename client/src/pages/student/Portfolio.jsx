@@ -35,6 +35,15 @@ function getRiskColor(score) {
   return '#EF4444'
 }
 
+const MOOD_EMOJI = {
+  amazing: '🤩', great: '😊', good: '🙂',
+  okay: '😐', tough: '😔',
+  5: '🤩', 4: '😊', 3: '🙂', 2: '😐', 1: '😔',
+}
+function getMoodEmoji(mood) {
+  return MOOD_EMOJI[mood] ?? (mood && String(mood).length <= 2 ? mood : '😐')
+}
+
 function getRiskLabel(score) {
   if (score < 40) return 'Low'
   if (score < 70) return 'Medium'
@@ -239,7 +248,7 @@ export default function Portfolio() {
                 style={{ background: '#0C0C12', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '14px', padding: '14px', cursor: 'pointer', transition: 'border-color 0.2s' }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '18px' }}>{entry.mood || '🙂'}</span>
+                  <span style={{ fontSize: '18px' }}>{getMoodEmoji(entry.mood)}</span>
                   <span style={{ fontSize: '11px', fontWeight: 600, color: 'rgba(232,184,75,0.8)' }}>Wk {entry.week}</span>
                   <span style={{ marginLeft: 'auto', fontSize: '10px', padding: '1px 6px', borderRadius: '999px', background: `${getRiskColor(entry.riskScore)}15`, color: getRiskColor(entry.riskScore) }}>{entry.riskScore}</span>
                 </div>

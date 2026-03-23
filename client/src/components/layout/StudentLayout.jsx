@@ -23,21 +23,21 @@ const C = {
 
 // ─── Nav items passed to shared Sidebar ───────────────────────────────────────
 const NAV_ITEMS = [
-  { icon: LayoutDashboard, label: 'Dashboard',  path: '/dashboard'  },
-  { icon: PenLine,         label: 'Write Entry', path: '/submit'     },
-  { icon: BookOpen,        label: 'My Entries',  path: '/my-entries' },
-  { icon: TrendingUp,      label: 'Timeline',    path: '/timeline'   },
-  { icon: CalendarDays,    label: 'Sessions',    path: '/sessions'   },
-  { icon: Award,           label: 'Portfolio',   path: '/portfolio'  },
+  { icon: LayoutDashboard, label: 'Dashboard',  path: '/student/dashboard'  },
+  { icon: PenLine,         label: 'Write Entry', path: '/student/submit'     },
+  { icon: BookOpen,        label: 'My Entries',  path: '/student/entries'    },
+  { icon: TrendingUp,      label: 'Timeline',    path: '/student/timeline'   },
+  { icon: CalendarDays,    label: 'Sessions',    path: '/student/sessions'   },
+  { icon: Award,           label: 'Portfolio',   path: '/student/portfolio'  },
 ]
 
 const PAGE_TITLES = {
-  '/dashboard':  'Dashboard',
-  '/submit':     'Write Entry',
-  '/my-entries': 'My Entries',
-  '/timeline':   'Timeline',
-  '/sessions':   'Sessions',
-  '/portfolio':  'Portfolio',
+  '/student/dashboard': 'Dashboard',
+  '/student/submit':    'Write Entry',
+  '/student/entries':   'My Entries',
+  '/student/timeline':  'Timeline',
+  '/student/sessions':  'Sessions',
+  '/student/portfolio': 'Portfolio',
 }
 
 const SOCKET_EVENTS = [
@@ -164,10 +164,15 @@ export default function StudentLayout() {
       queryClient.invalidateQueries({ queryKey: ['my-entries'] })
       queryClient.invalidateQueries({ queryKey: ['timeline-entries'] })
       queryClient.invalidateQueries({ queryKey: ['student-overview'] })
+      queryClient.invalidateQueries({ queryKey: ['portfolio'] })
+      queryClient.invalidateQueries({ queryKey: ['notifications'] })
     }
     socket.on('entry:responded', handler)
     // Invalidate sessions on session update
-    const sessionHandler = () => queryClient.invalidateQueries({ queryKey: ['student-sessions'] })
+    const sessionHandler = () => {
+      queryClient.invalidateQueries({ queryKey: ['student-sessions'] })
+      queryClient.invalidateQueries({ queryKey: ['student-sessions-dashboard'] })
+    }
     socket.on('session:update', sessionHandler)
     // Notification-only events
     const notifHandler = (data) => stableAdd(data)
@@ -196,7 +201,7 @@ export default function StudentLayout() {
           pageTitle={pageTitle}
           unreadCount={unreadCount}
           onHamburger={() => setSidebarOpen(true)}
-          onWriteEntry={() => navigate('/submit')}
+          onWriteEntry={() => navigate('/student/submit')}
         />
 
         <main style={{

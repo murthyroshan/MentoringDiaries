@@ -17,13 +17,19 @@ import api from '../../services/api'
 ChartJS.register(LineElement, CategoryScale, LinearScale, PointElement, Tooltip, Filler)
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
+const MOOD_EMOJI = {
+  amazing:'🤩', great:'😊', good:'🙂', okay:'😐', tough:'😔',
+  5:'🤩', 4:'😊', 3:'🙂', 2:'😐', 1:'😔',
+}
+
 function normalizeEntry(e) {
   return {
     ...e,
     week: e.weekNumber ?? e.week,
     riskScore: e.aiAnalysis?.riskScore ?? e.riskScore ?? 0,
-    mentorComment: e.mentorResponse?.content ?? e.mentorComment,
-    mood: e.moodEmoji ?? e.mood,
+    mentorComment: e.mentorResponse || e.mentorComment || '',
+    mood: MOOD_EMOJI[e.moodEmoji ?? e.mood] ?? '😐',
+    reflection: e.content || e.reflection || '',
   }
 }
 
@@ -76,7 +82,7 @@ function TimelineCard({ entry, isExpanded, onToggle }) {
       {/* Header */}
       <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'8px' }}>
         <span style={{ fontSize:'14px', fontWeight:600, color:'#F2F0E8' }}>
-          Week {entry.week}
+          {entry.week ? `Week ${entry.week}` : format(new Date(entry.startDate || entry.createdAt), 'MMM d')}
         </span>
         <span style={{ fontSize:'18px' }}>{entry.mood}</span>
         <span style={{
@@ -143,7 +149,9 @@ function TimelineCard({ entry, isExpanded, onToggle }) {
 // ── Risk Chart ─────────────────────────────────────────────────────────────────
 function RiskChart({ entries }) {
   const chartEntries = [...entries].reverse()
-  const labels = chartEntries.map(e => `Wk ${e.week}`)
+  const labels = chartEntries.map(e =>
+    e.week ? `Wk ${e.week}` : format(new Date(e.startDate || e.createdAt), 'MMM d')
+  )
   const data   = chartEntries.map(e => e.riskScore)
   const last   = data[data.length - 1] ?? 0
   const prev   = data[data.length - 2] ?? last

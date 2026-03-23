@@ -33,8 +33,8 @@ export default function LoginPage() {
             const res = await api.post('/auth/login', data)
             login(res.data.user)
             addToast(`Welcome back, ${res.data.user.name}!`, 'success')
-            const redirects = { student: '/dashboard', mentor: '/mentor', admin: '/admin' }
-            navigate(redirects[res.data.user.role] || '/dashboard')
+            const redirects = { student: '/student/dashboard', mentor: '/mentor/dashboard', admin: '/admin/dashboard' }
+            navigate(redirects[res.data.user.role] || '/student/dashboard')
         } catch (err) {
             addToast(err.response?.data?.message || 'Login failed', 'error')
         }

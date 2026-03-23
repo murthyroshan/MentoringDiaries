@@ -404,8 +404,8 @@ export default function Register() {
   const values = watch()
 
   function navigateByRole(role) {
-    const routes = { student:'/dashboard', mentor:'/mentor', admin:'/admin' }
-    navigate(routes[role] ?? '/dashboard', { replace:true })
+    const routes = { student:'/student/dashboard', mentor:'/mentor/dashboard', admin:'/admin/dashboard' }
+    navigate(routes[role] ?? '/student/dashboard', { replace:true })
   }
 
   function goTo(path) {

@@ -23,21 +23,21 @@ const pageVariants = {
 // ─── Nav items by role ─────────────────────────────────────────────────────────
 const NAV_BY_ROLE = {
     student: [
-        { icon: LayoutDashboard, label: 'Dashboard',    path: '/dashboard'   },
-        { icon: PlusCircle,      label: 'Submit Entry', path: '/submit'      },
-        { icon: BookOpen,        label: 'My Entries',   path: '/my-entries'  },
-        { icon: UserCheck,       label: 'Timeline',     path: '/timeline'    },
-        { icon: CalendarDays,    label: 'Sessions',     path: '/sessions'    },
-        { icon: BookMarked,      label: 'Portfolio',    path: '/portfolio'   },
+        { icon: LayoutDashboard, label: 'Dashboard',    path: '/student/dashboard'  },
+        { icon: PlusCircle,      label: 'Submit Entry', path: '/student/submit'     },
+        { icon: BookOpen,        label: 'My Entries',   path: '/student/entries'    },
+        { icon: UserCheck,       label: 'Timeline',     path: '/student/timeline'   },
+        { icon: CalendarDays,    label: 'Sessions',     path: '/student/sessions'   },
+        { icon: BookMarked,      label: 'Portfolio',    path: '/student/portfolio'  },
     ],
     mentor: [
-        { icon: LayoutDashboard, label: 'Dashboard',        path: '/mentor'              },
+        { icon: LayoutDashboard, label: 'Dashboard',        path: '/mentor/dashboard'    },
         { icon: Users,           label: 'My Students',      path: '/mentor/students'     },
         { icon: CalendarDays,    label: 'Sessions',         path: '/mentor/sessions'     },
         { icon: Flag,            label: 'Flagged Entries',  path: '/mentor/flagged'      },
     ],
     admin: [
-        { icon: BarChart3,   label: 'Analytics',       path: '/admin'              },
+        { icon: BarChart3,   label: 'Analytics',       path: '/admin/dashboard'    },
         { icon: Users,       label: 'User Management', path: '/admin/users'        },
         { icon: BookMarked,  label: 'All Entries',     path: '/admin/entries'      },
         { icon: ShieldAlert, label: 'Risk Monitor',    path: '/admin/risk-monitor' },
@@ -67,16 +67,23 @@ export default function DashboardLayout() {
         const entryHandler = () => {
             queryClient.invalidateQueries({ queryKey: ['mentor-students'] })
             queryClient.invalidateQueries({ queryKey: ['mentor-flagged'] })
+            queryClient.invalidateQueries({ queryKey: ['mentor-priority-queue'] })
+            queryClient.invalidateQueries({ queryKey: ['mentor-efficiency'] })
             queryClient.invalidateQueries({ queryKey: ['admin-entries'] })
             queryClient.invalidateQueries({ queryKey: ['admin-analytics'] })
         }
+        const criticalHandler = () => {
+            queryClient.invalidateQueries({ queryKey: ['mentor-flagged'] })
+            queryClient.invalidateQueries({ queryKey: ['mentor-priority-queue'] })
+            queryClient.invalidateQueries({ queryKey: ['admin-analytics'] })
+        }
         socket.on('entry:submitted', entryHandler)
-        socket.on('entry:critical', entryHandler)
+        socket.on('entry:critical', criticalHandler)
 
         return () => {
             events.forEach(ev => socket.off(ev, notifHandler))
             socket.off('entry:submitted', entryHandler)
-            socket.off('entry:critical', entryHandler)
+            socket.off('entry:critical', criticalHandler)
         }
     }, [addNotification, queryClient])
 

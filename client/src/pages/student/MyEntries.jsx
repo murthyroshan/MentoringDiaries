@@ -6,16 +6,6 @@ import { Download, X, ChevronRight } from 'lucide-react'
 import { format } from 'date-fns'
 import api from '../../services/api'
 
-// ── Demo fallback data ─────────────────────────────────────────────────────────
-const DEMO_ENTRIES = [
-  { _id:'1', week:14, mood:'😊', riskScore:23, riskLevel:'low', reflection:'Had a productive week overall. Managed to complete all assignments on time and attended all classes. Feeling good about the upcoming exams.', subjectCount:4, createdAt:new Date().toISOString(), reviewStatus:'reviewed' },
-  { _id:'2', week:13, mood:'🙂', riskScore:31, riskLevel:'low', reflection:'Struggled a bit with the advanced topics in Computer Science but got help from peers. Attendance was consistent.', subjectCount:4, createdAt:new Date(Date.now()-7*86400000).toISOString(), reviewStatus:'reviewed' },
-  { _id:'3', week:12, mood:'😐', riskScore:48, riskLevel:'medium', reflection:'Missed two classes due to illness. Need to catch up on the material covered. Feeling slightly behind.', subjectCount:3, createdAt:new Date(Date.now()-14*86400000).toISOString(), reviewStatus:'pending' },
-  { _id:'4', week:11, mood:'😊', riskScore:25, riskLevel:'low', reflection:'Great week! Submitted all assignments early and had a productive mentoring session with Dr. Reema.', subjectCount:5, createdAt:new Date(Date.now()-21*86400000).toISOString(), reviewStatus:'reviewed' },
-  { _id:'5', week:10, mood:'😔', riskScore:72, riskLevel:'high', reflection:'Very difficult week. Multiple deadlines coincided and I felt overwhelmed. Need better time management.', subjectCount:4, createdAt:new Date(Date.now()-28*86400000).toISOString(), reviewStatus:'flagged' },
-  { _id:'6', week:9, mood:'🙂', riskScore:38, riskLevel:'low', reflection:'Steady week with no major issues. Completed lab reports and attended all sessions.', subjectCount:4, createdAt:new Date(Date.now()-35*86400000).toISOString(), reviewStatus:'reviewed' },
-]
-
 // ── Helpers ────────────────────────────────────────────────────────────────────
 function getRiskColor(score) {
   if (score < 40) return '#3DD68C'
@@ -27,6 +17,28 @@ function getRiskLabel(score) {
   if (score < 40) return 'Low'
   if (score < 70) return 'Medium'
   return 'High'
+}
+
+const MOOD_EMOJI = {
+  amazing: '🤩', great: '😊', good: '🙂',
+  okay: '😐', tough: '😔',
+  5: '🤩', 4: '😊', 3: '🙂', 2: '😐', 1: '😔',
+}
+function getMoodEmoji(mood) {
+  return MOOD_EMOJI[mood] ?? '😐'
+}
+
+// Derive display status from real DiaryEntry fields
+function getDisplayStatus(entry) {
+  if (entry.aiAnalysis?.flagged) return 'flagged'
+  if (entry.status === 'reviewed') return 'reviewed'
+  return 'pending'
+}
+
+function getWeekLabel(entry) {
+  if (entry.week) return `Week ${entry.week}`
+  if (entry.startDate) return format(new Date(entry.startDate), 'MMM d')
+  return '—'
 }
 
 // ── Skeleton Grid ──────────────────────────────────────────────────────────────
@@ -81,7 +93,7 @@ function EmptyState() {
         Start documenting your journey
       </div>
       <button
-        onClick={() => navigate('/submit')}
+        onClick={() => navigate('/student/submit')}
         style={{
           padding:'10px 24px', borderRadius:'12px', fontSize:'13px',
           background:'linear-gradient(135deg,#E8B84B,#F5D380)', color:'#06060A',
@@ -96,8 +108,10 @@ function EmptyState() {
 
 // ── Entry Card ─────────────────────────────────────────────────────────────────
 function EntryCard({ entry, delay, onClick }) {
+  const displayStatus = getDisplayStatus(entry)
+  const riskScore = entry.aiAnalysis?.riskScore ?? 0
   const statusColors = { reviewed:'#3DD68C', pending:'#F59E0B', flagged:'#EF4444' }
-  const statusColor = statusColors[entry.reviewStatus] || '#F59E0B'
+  const statusColor = statusColors[displayStatus]
 
   return (
     <motion.div
@@ -124,16 +138,16 @@ function EntryCard({ entry, delay, onClick }) {
           background:'rgba(232,184,75,0.1)', color:'#E8B84B',
           border:'1px solid rgba(232,184,75,0.2)', fontWeight:500,
         }}>
-          Week {entry.week}
+          {getWeekLabel(entry)}
         </span>
-        <span style={{ fontSize:'22px' }}>{entry.mood}</span>
+        <span style={{ fontSize:'22px' }}>{getMoodEmoji(entry.mood)}</span>
         <span style={{
           marginLeft:'auto', fontSize:'10px', padding:'2px 8px', borderRadius:'999px',
-          background:`${getRiskColor(entry.riskScore)}15`,
-          color:getRiskColor(entry.riskScore),
-          border:`1px solid ${getRiskColor(entry.riskScore)}25`,
+          background:`${getRiskColor(riskScore)}15`,
+          color:getRiskColor(riskScore),
+          border:`1px solid ${getRiskColor(riskScore)}25`,
         }}>
-          {getRiskLabel(entry.riskScore)} Risk
+          {getRiskLabel(riskScore)} Risk
         </span>
       </div>
 
@@ -150,24 +164,24 @@ function EntryCard({ entry, delay, onClick }) {
         fontSize:'13px', color:'rgba(242,240,232,0.5)', margin:0, lineHeight:1.6,
         display:'-webkit-box', WebkitLineClamp:3, WebkitBoxOrient:'vertical', overflow:'hidden',
       }}>
-        {entry.reflection}
+        {entry.content || ''}
       </p>
 
       {/* Bottom row */}
       <div style={{ display:'flex', alignItems:'center', gap:'8px', marginTop:'14px' }}>
         <span style={{ fontSize:'11px', color:'rgba(242,240,232,0.3)', flex:1 }}>
-          {entry.subjectCount} subjects
+          {entry.subjectRatings?.length ?? 0} subjects
         </span>
         <span style={{
           fontSize:'10px', padding:'2px 8px', borderRadius:'999px',
           background:`${statusColor}12`,
           color:statusColor,
           border:`1px solid ${statusColor}25`,
-          animation: entry.reviewStatus === 'flagged' ? 'flag-pulse 2s ease-in-out infinite' : 'none',
+          animation: displayStatus === 'flagged' ? 'flag-pulse 2s ease-in-out infinite' : 'none',
         }}>
-          {entry.reviewStatus === 'reviewed'
+          {displayStatus === 'reviewed'
             ? 'Reviewed'
-            : entry.reviewStatus === 'flagged'
+            : displayStatus === 'flagged'
             ? '⚠ Flagged'
             : 'Pending'}
         </span>
@@ -230,10 +244,10 @@ function SlideOverPanel({ entry, onClose }) {
           display:'flex', alignItems:'center', gap:'10px',
           marginBottom:'20px', paddingRight:'40px',
         }}>
-          <span style={{ fontSize:'32px' }}>{entry.mood}</span>
+          <span style={{ fontSize:'32px' }}>{getMoodEmoji(entry.mood)}</span>
           <div>
             <div style={{ fontSize:'20px', fontWeight:700, color:'#F2F0E8' }}>
-              Week {entry.week}
+              {getWeekLabel(entry)}
             </div>
             <div style={{ fontSize:'12px', color:'rgba(242,240,232,0.35)' }}>
               {format(new Date(entry.createdAt), 'EEEE, MMMM d, yyyy')}
@@ -241,11 +255,11 @@ function SlideOverPanel({ entry, onClose }) {
           </div>
           <span style={{
             marginLeft:'auto', padding:'3px 10px', borderRadius:'999px', fontSize:'12px',
-            background:`${getRiskColor(entry.riskScore)}15`,
-            color:getRiskColor(entry.riskScore),
-            border:`1px solid ${getRiskColor(entry.riskScore)}25`,
+            background:`${getRiskColor(entry.aiAnalysis?.riskScore ?? 0)}15`,
+            color:getRiskColor(entry.aiAnalysis?.riskScore ?? 0),
+            border:`1px solid ${getRiskColor(entry.aiAnalysis?.riskScore ?? 0)}25`,
           }}>
-            {entry.riskScore} Risk
+            {entry.aiAnalysis?.riskScore ?? 0} Risk
           </span>
         </div>
 
@@ -260,12 +274,12 @@ function SlideOverPanel({ entry, onClose }) {
             Reflection
           </div>
           <p style={{ fontSize:'13px', color:'rgba(242,240,232,0.7)', lineHeight:1.7, margin:0 }}>
-            {entry.reflection}
+            {entry.content || ''}
           </p>
         </div>
 
         {/* Subject ratings — only if present */}
-        {entry.subjects?.length > 0 && (
+        {entry.subjectRatings?.length > 0 && (
           <div style={{ marginBottom:'20px' }}>
             <div style={{
               fontSize:'11px', color:'rgba(242,240,232,0.35)', marginBottom:'10px',
@@ -273,7 +287,7 @@ function SlideOverPanel({ entry, onClose }) {
             }}>
               Subjects
             </div>
-            {entry.subjects.map((s, i) => (
+            {entry.subjectRatings.map((s, i) => (
               <div
                 key={i}
                 style={{
@@ -304,7 +318,7 @@ function SlideOverPanel({ entry, onClose }) {
             Mentor Feedback
           </div>
           <p style={{ fontSize:'12px', color:'rgba(242,240,232,0.5)', margin:0, lineHeight:1.6 }}>
-            {entry.mentorComment || 'Your mentor has been notified and will review this entry soon.'}
+            {entry.mentorResponse || 'Your mentor has been notified and will review this entry soon.'}
           </p>
         </div>
       </motion.div>
@@ -322,11 +336,10 @@ export default function MyEntries() {
     queryKey: ['my-entries'],
     queryFn: () =>
       api.get('/diary')
-        .then(r => r.data?.data || r.data?.entries || [])
-        .catch(() => DEMO_ENTRIES),
+        .then(r => r.data?.data || r.data?.entries || []),
   })
 
-  const entries = Array.isArray(rawEntries) && rawEntries.length > 0 ? rawEntries : DEMO_ENTRIES
+  const entries = Array.isArray(rawEntries) ? rawEntries : []
 
   const filtered = entries.filter(e => {
     if (filter === 'this-month') {
@@ -334,8 +347,8 @@ export default function MyEntries() {
       const d = new Date(e.createdAt)
       return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
     }
-    if (filter === 'high-risk') return e.riskScore >= 70
-    if (filter === 'pending') return e.reviewStatus === 'pending'
+    if (filter === 'high-risk') return (e.aiAnalysis?.riskScore ?? 0) >= 70
+    if (filter === 'pending') return e.status === 'submitted' && !e.aiAnalysis?.flagged
     return true
   })
 

@@ -37,7 +37,7 @@ export default function ReviewEntry() {
             queryClient.invalidateQueries(['entry', id])
             queryClient.invalidateQueries(['mentor-entries'])
             addToast('Response sent successfully!', 'success')
-            navigate('/mentor')
+            navigate('/mentor/dashboard')
         },
         onError: (err) => addToast(err.response?.data?.message || 'Failed to send response', 'error'),
     })
