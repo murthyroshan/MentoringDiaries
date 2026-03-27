@@ -85,7 +85,11 @@ api.interceptors.response.use(
             }
         }
 
-        logApiError(error)
+        // Suppress expected 401 on silent auth check — not a real error
+        const isAuthMe = originalRequest.url?.includes('/auth/me')
+        if (!(isAuthMe && error.response?.status === 401)) {
+            logApiError(error)
+        }
         return Promise.reject(error)
     }
 )

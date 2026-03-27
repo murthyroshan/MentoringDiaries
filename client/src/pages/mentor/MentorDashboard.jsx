@@ -29,7 +29,7 @@ export default function MentorDashboard() {
     })
 
     const entries = queueData?.data || []
-    const myEfficiency = effData?.data?.find((e) => e._id === user?._id)
+    const myEfficiency = effData?.data?.find((e) => String(e._id) === String(user?._id))
     const criticalCount = entries.filter((e) => e.priorityRank === 1).length
     const pendingCount = entries.filter((e) => e.priorityRank === 3).length
 

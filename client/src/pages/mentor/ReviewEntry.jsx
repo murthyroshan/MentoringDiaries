@@ -34,8 +34,8 @@ export default function ReviewEntry() {
     const { mutate, isPending } = useMutation({
         mutationFn: () => api.patch(`/diary/${id}/response`, { response }),
         onSuccess: () => {
-            queryClient.invalidateQueries(['entry', id])
-            queryClient.invalidateQueries(['mentor-entries'])
+            queryClient.invalidateQueries({ queryKey: ['entry', id] })
+            queryClient.invalidateQueries({ queryKey: ['mentor-entries'] })
             addToast('Response sent successfully!', 'success')
             navigate('/mentor/dashboard')
         },

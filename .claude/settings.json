@@ -7,7 +7,9 @@
       "Bash(curl -s -b /tmp/cookies_student.txt \"http://localhost:5000/api/diary\")",
       "Bash(node src/utils/seed.js)",
       "Bash(node db_audit.js)",
-      "Bash(grep -rl \"socket\\\\|connectSocket\" /c/Users/tolet/MentoringDiaries/client/src/ --include=*.jsx --include=*.js)"
+      "Bash(grep -rl \"socket\\\\|connectSocket\" /c/Users/tolet/MentoringDiaries/client/src/ --include=*.jsx --include=*.js)",
+      "Bash(find c:UserstoletMentoringDiariesclientsrchooks -type f -name *.jsx -o -name *.js)",
+      "Bash(find c:UserstoletMentoringDiariesserversrcmodels -type f -name *.js)"
     ]
   }
 }

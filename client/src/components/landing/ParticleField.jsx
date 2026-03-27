@@ -1,4 +1,4 @@
-import { useRef, useState, useMemo, useEffect } from 'react'
+import { useRef, useState, useMemo, useEffect, useCallback } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 
@@ -113,6 +113,16 @@ export default function ParticleField({ className = '', style = {} }) {
     return () => window.removeEventListener('mousemove', move)
   }, [])
 
+  // Capture the renderer so we can force context loss on unmount, preventing
+  // "WebGL context lost" warnings when the landing page unmounts.
+  const onCreated = useCallback(({ gl }) => {
+    return () => {
+      gl.dispose()
+      const ext = gl.getContext()?.getExtension('WEBGL_lose_context')
+      ext?.loseContext()
+    }
+  }, [])
+
   return (
     <Canvas
       className={className}
@@ -120,6 +130,7 @@ export default function ParticleField({ className = '', style = {} }) {
       camera={{ position: [0, 0, 10], fov: 75 }}
       gl={{ antialias: false, alpha: true, powerPreference: 'high-performance' }}
       style={{ background: 'transparent', ...style }}
+      onCreated={onCreated}
     >
       <Particles mouseRef={mouseRef} />
     </Canvas>

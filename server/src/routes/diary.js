@@ -35,10 +35,8 @@ router.get('/priority-queue', requireRole('mentor', 'admin'), getPriorityQueue);
 router.get('/student/:studentId/history', requireRole('mentor', 'admin'), getStudentRiskHistory);
 router.get('/:id/mentor-suggestion', requireRole('mentor', 'admin'), getMentorSuggestion);
 
-// auth is already applied via router.use(auth) above; restated here explicitly
-// so the security intent is clear when reading the route table at a glance.
-router.get('/', auth, getEntries);
-router.get('/:id', auth, getEntry);
+router.get('/', getEntries);
+router.get('/:id', getEntry);
 router.patch('/:id/response', requireRole('mentor', 'admin'), mentorResponseValidation, addMentorResponse);
 
 module.exports = router;

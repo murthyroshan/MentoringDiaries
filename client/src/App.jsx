@@ -62,24 +62,22 @@ function PublicRoute({ children }) {
   return children
 }
 
+function DashboardRedirect() {
+  const { isAuthenticated, user } = useAuthStore()
+  return isAuthenticated
+    ? <Navigate to={`/${user?.role}/dashboard`} replace />
+    : <Navigate to="/login" replace />
+}
+
 function AnimatedRoutes() {
   const location = useLocation()
-  const { isAuthenticated, user } = useAuthStore()
   return (
     <AnimatePresence mode="wait">
       <Routes location={location} key={location.key}>
-        {/* Public — root redirects by role when logged in */}
-        <Route path="/" element={
-          isAuthenticated
-            ? <Navigate to={`/${user?.role}/dashboard`} replace />
-            : <LandingPage />
-        } />
+        {/* Public — landing is always visible, auth state handled inside */}
+        <Route path="/" element={<LandingPage />} />
         {/* Legacy /dashboard catch */}
-        <Route path="/dashboard" element={
-          isAuthenticated
-            ? <Navigate to={`/${user?.role}/dashboard`} replace />
-            : <Navigate to="/login" replace />
-        } />
+        <Route path="/dashboard" element={<DashboardRedirect />} />
         <Route path="/login" element={<PublicRoute><LoginPage /></PublicRoute>} />
         <Route path="/register" element={<PublicRoute><RegisterPage /></PublicRoute>} />
 

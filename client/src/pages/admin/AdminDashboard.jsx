@@ -50,12 +50,22 @@ export default function AdminDashboard() {
     })
 
     // Sentiment Chart
+    const SENTIMENT_COLORS = {
+        positive: 'rgba(34,197,94,0.85)',
+        neutral: 'rgba(99,102,241,0.85)',
+        negative: 'rgba(239,68,68,0.85)',
+    }
+    const SENTIMENT_BORDER_COLORS = {
+        positive: 'rgb(34,197,94)',
+        neutral: 'rgb(99,102,241)',
+        negative: 'rgb(239,68,68)',
+    }
     const sentimentChart = {
         labels: sentiment?.map(s => s._id?.charAt(0).toUpperCase() + s._id?.slice(1)) || [],
         datasets: [{
             data: sentiment?.map(s => s.count) || [],
-            backgroundColor: ['rgba(34,197,94,0.85)', 'rgba(99,102,241,0.85)', 'rgba(239,68,68,0.85)'],
-            borderColor: ['rgb(34,197,94)', 'rgb(99,102,241)', 'rgb(239,68,68)'],
+            backgroundColor: sentiment?.map(s => SENTIMENT_COLORS[s._id] || 'rgba(148,163,184,0.5)') || [],
+            borderColor: sentiment?.map(s => SENTIMENT_BORDER_COLORS[s._id] || 'rgb(148,163,184)') || [],
             borderWidth: 2,
             hoverOffset: 8,
         }],

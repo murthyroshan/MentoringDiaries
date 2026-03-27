@@ -1,7 +1,8 @@
 import {
   useEffect, useRef, useState, useCallback, lazy, Suspense,
 } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import { useAuthStore } from '../../store/authStore'
 import {
   motion, useReducedMotion, useScroll,
   useMotionValue, useSpring, AnimatePresence,
@@ -445,7 +446,7 @@ function FinalCTAContent({ skip }) {
               transition={{ delay:0.9 }}
             >
               <MagneticButton
-                to="/register"
+                to={dashboardPath || '/register'}
                 strength={8}
                 style={{
                   display:'inline-flex', alignItems:'center', gap:'12px',
@@ -460,7 +461,7 @@ function FinalCTAContent({ skip }) {
                 onMouseEnter={e => e.currentTarget.style.boxShadow = '0 30px 100px rgba(232,184,75,0.5)'}
                 onMouseLeave={e => e.currentTarget.style.boxShadow = '0 0 0 rgba(232,184,75,0)'}
               >
-                Begin your journey
+                {isAuthenticated ? 'Go to dashboard' : 'Begin your journey'}
                 <svg viewBox="0 0 20 20" fill="currentColor" style={{ width:'20px', height:'20px' }}>
                   <path fillRule="evenodd" d="M3 10a.75.75 0 01.75-.75h10.638L10.23 5.29a.75.75 0 111.04-1.08l5.5 5.25a.75.75 0 010 1.08l-5.5 5.25a.75.75 0 11-1.04-1.08l4.158-3.96H3.75A.75.75 0 013 10z" />
                 </svg>
@@ -477,6 +478,11 @@ function FinalCTAContent({ skip }) {
 export default function Landing() {
   const skip = useReducedMotion()
   useSmoothScroll(skip)
+
+  const navigate = useNavigate()
+  const { isAuthenticated, user } = useAuthStore()
+  const dashboardPath = isAuthenticated && user?.role ? `/${user.role}/dashboard` : null
+  const handleCTA = () => navigate(dashboardPath || '/register')
 
   // Scroll state
   const { scrollY } = useScroll()
@@ -606,29 +612,53 @@ export default function Landing() {
 
           {/* Actions */}
           <div style={{ display:'flex', alignItems:'center', gap:'12px' }}>
-            <Link
-              to="/login"
-              className="nav-underline"
-              data-cursor="hover"
-              style={{ fontSize:'14px', color:'rgba(242,240,232,0.6)', padding:'8px 12px' }}
-              onMouseEnter={e => e.currentTarget.style.color = C.text}
-              onMouseLeave={e => e.currentTarget.style.color = 'rgba(242,240,232,0.6)'}
-            >
-              Sign in
-            </Link>
-            <Link
-              to="/register"
-              className="get-started-btn"
-              data-cursor="button"
-              style={{
-                display:'flex', alignItems:'center', gap:'0',
-                border:`1px solid rgba(232,184,75,0.3)`,
-                padding:'8px 20px', borderRadius:'10px',
-                fontSize:'14px', fontWeight:500,
-              }}
-            >
-              <span style={{ color:C.text }}>Get started</span>
-            </Link>
+            {isAuthenticated ? (
+              <>
+                <span style={{ fontSize:'14px', color:'rgba(242,240,232,0.6)', padding:'8px 12px' }}>
+                  Welcome, {user?.name?.split(' ')[0]}
+                </span>
+                <button
+                  onClick={() => navigate(dashboardPath)}
+                  className="get-started-btn"
+                  data-cursor="button"
+                  style={{
+                    display:'flex', alignItems:'center', gap:'6px',
+                    border:`1px solid rgba(232,184,75,0.3)`,
+                    padding:'8px 20px', borderRadius:'10px',
+                    fontSize:'14px', fontWeight:500,
+                    background:'transparent', cursor:'pointer',
+                  }}
+                >
+                  <span style={{ color:C.text }}>Go to dashboard →</span>
+                </button>
+              </>
+            ) : (
+              <>
+                <Link
+                  to="/login"
+                  className="nav-underline"
+                  data-cursor="hover"
+                  style={{ fontSize:'14px', color:'rgba(242,240,232,0.6)', padding:'8px 12px' }}
+                  onMouseEnter={e => e.currentTarget.style.color = C.text}
+                  onMouseLeave={e => e.currentTarget.style.color = 'rgba(242,240,232,0.6)'}
+                >
+                  Sign in
+                </Link>
+                <Link
+                  to="/register"
+                  className="get-started-btn"
+                  data-cursor="button"
+                  style={{
+                    display:'flex', alignItems:'center', gap:'0',
+                    border:`1px solid rgba(232,184,75,0.3)`,
+                    padding:'8px 20px', borderRadius:'10px',
+                    fontSize:'14px', fontWeight:500,
+                  }}
+                >
+                  <span style={{ color:C.text }}>Get started</span>
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </motion.nav>
@@ -751,9 +781,9 @@ export default function Landing() {
 
           {/* CTA buttons */}
           <div style={{ display:'flex', gap:'20px', justifyContent:'center', marginTop:'48px', flexWrap:'wrap' }}>
-            {/* Primary — Start for free */}
+            {/* Primary — Start for free / Go to dashboard */}
             <MagneticButton
-              to="/register"
+              to={dashboardPath || '/register'}
               strength={6}
               style={{
                 display:'inline-flex', alignItems:'center', gap:'10px',
@@ -768,7 +798,7 @@ export default function Landing() {
               onMouseEnter={() => setPrimaryHover(true)}
               onMouseLeave={() => setPrimaryHover(false)}
             >
-              Start for free
+              {isAuthenticated ? 'Go to dashboard' : 'Start for free'}
               <motion.svg
                 animate={primaryHover && !skip ? { x:6 } : { x:0 }}
                 viewBox="0 0 20 20" fill="currentColor"
@@ -996,10 +1026,10 @@ export default function Landing() {
           {/* CTA */}
           <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-start', gap:'16px' }}>
             <p style={{ fontSize:'14px', color:C.muted }}>
-              Ready to get started?
+              {isAuthenticated ? `Welcome back, ${user?.name?.split(' ')[0]}` : 'Ready to get started?'}
             </p>
             <Link
-              to="/register"
+              to={dashboardPath || '/register'}
               className="get-started-btn"
               data-cursor="button"
               style={{
@@ -1008,7 +1038,7 @@ export default function Landing() {
                 borderRadius:'12px', fontSize:'14px', fontWeight:500,
               }}
             >
-              <span style={{ color:C.text }}>Get started →</span>
+              <span style={{ color:C.text }}>{isAuthenticated ? 'Go to dashboard →' : 'Get started →'}</span>
             </Link>
           </div>
         </div>

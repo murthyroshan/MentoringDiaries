@@ -1,8 +1,9 @@
-import { useState, useRef, useCallback } from 'react'
+import { Fragment, useState, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../../store/authStore'
+import { useUIStore } from '../../store/uiStore'
 import api from '../../services/api'
 import { ChevronLeft, Check } from 'lucide-react'
 
@@ -346,6 +347,46 @@ function Step1({ formData, setFormData, onNext }) {
         </div>
       </div>
 
+      {formData.attendance.length < 4 && (
+        <div style={{ marginBottom: '24px' }}>
+          <label
+            style={{
+              fontSize: '12px',
+              color: 'rgba(239,68,68,0.8)',
+              marginBottom: '8px',
+              display: 'block',
+              fontWeight: 500,
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
+            }}
+          >
+            Please explain your attendance *
+          </label>
+          <textarea
+            placeholder="Why were you absent? (e.g. illness, family emergency...)"
+            value={formData.attendanceExplanation}
+            onChange={e => set('attendanceExplanation', e.target.value)}
+            rows={3}
+            style={{
+              width: '100%',
+              background: 'rgba(255,255,255,0.02)',
+              border: `1px solid ${formData.attendanceExplanation.trim().length >= 10 ? 'rgba(232,184,75,0.3)' : 'rgba(239,68,68,0.3)'}`,
+              borderRadius: '16px',
+              padding: '14px 16px',
+              color: '#F2F0E8',
+              fontSize: '13px',
+              outline: 'none',
+              resize: 'none',
+              fontFamily: 'inherit',
+              boxSizing: 'border-box',
+            }}
+          />
+          <span style={{ fontSize: '11px', color: 'rgba(242,240,232,0.3)' }}>
+            {formData.attendanceExplanation.trim().length} / 10 min chars
+          </span>
+        </div>
+      )}
+
       <div style={{ marginBottom: '28px' }}>
         <label
           style={{
@@ -377,7 +418,10 @@ function Step1({ formData, setFormData, onNext }) {
         </div>
       </div>
 
-      <GoldButton onClick={onNext} disabled={formData.mood === null}>
+      <GoldButton
+        onClick={onNext}
+        disabled={formData.mood === null || (formData.attendance.length < 4 && formData.attendanceExplanation.trim().length < 10)}
+      >
         Continue →
       </GoldButton>
     </motion.div>
@@ -695,10 +739,14 @@ function Step3({ formData, setFormData, onSubmit, onBack, submitState, aiProgres
         <BackButton onClick={onBack} disabled={submitState === 'loading'} />
         <GoldButton
           onClick={onSubmit}
-          disabled={!formData.reflection.trim() || submitState === 'loading'}
+          disabled={formData.reflection.trim().length < 50 || submitState === 'loading'}
           style={{ flex: 1 }}
         >
-          {submitState === 'loading' ? 'Analyzing with AI...' : 'Submit entry →'}
+          {submitState === 'loading'
+            ? 'Analyzing with AI...'
+            : formData.reflection.trim().length < 50
+            ? `${50 - formData.reflection.trim().length} more chars needed`
+            : 'Submit entry →'}
         </GoldButton>
       </div>
     </motion.div>
@@ -708,6 +756,7 @@ function Step3({ formData, setFormData, onSubmit, onBack, submitState, aiProgres
 export default function SubmitEntry() {
   const reduced = useReducedMotion()
   const queryClient = useQueryClient()
+  const { addToast } = useUIStore()
 
   const [step, setStep] = useState(1)
   const [formData, setFormData] = useState({
@@ -719,6 +768,7 @@ export default function SubmitEntry() {
     reflection: '',
     emotionalState: null,
     weekNumber: getCurrentWeekNumber(),
+    attendanceExplanation: '',
   })
   const [submitState, setSubmitState] = useState('idle')
   const [aiProgress, setAiProgress] = useState(0)
@@ -736,16 +786,33 @@ export default function SubmitEntry() {
     }, 700)
 
     try {
+      // Map form data to server model field names (DiaryEntry schema)
+      const subjects =
+        formData.subjects.length > 0
+          ? formData.subjects
+          : SUBJECTS.map(name => ({ name, rating: 3, comment: '' }))
+
       const payload = {
-        weekNumber: formData.weekNumber,
-        mood: MOODS[formData.mood]?.label || 'Good',
-        moodEmoji: MOODS[formData.mood]?.emoji || '🙂',
-        attendance: formData.attendance,
-        weekRating: formData.weekRating,
-        subjects: formData.subjects,
-        problemsFaced: formData.problemsFaced,
-        reflection: formData.reflection,
-        emotionalState: EMOTIONS[formData.emotionalState] || 'Neutral',
+        // Section A — required, min 50 chars
+        content: formData.reflection,
+        // Legacy week number
+        week: formData.weekNumber,
+        // Section B — subjectRatings array of {name, rating, comment}
+        subjectRatings: subjects
+          .filter(s => s.rating > 0)
+          .map(s => ({ name: s.name, rating: s.rating, comment: s.comment || '' })),
+        // Section C — problemsFaced as object
+        problemsFaced: { academic: formData.problemsFaced || '', personal: '', other: '' },
+        // Section D — attendance count -> percentage (5 school days)
+        // Server requires attendanceExplanation when percentage < 75 (< 4/5 days)
+        attendancePercentage: Math.round((formData.attendance.length / 5) * 100),
+        ...(formData.attendance.length < 4 && {
+          attendanceExplanation: formData.attendanceExplanation,
+        }),
+        // Section E — emotionalRating 1-5: prefer Step 3 chip; fall back to Step 1 mood; default 3
+        emotionalRating: formData.emotionalState !== null ? formData.emotionalState + 1 : (formData.mood !== null ? formData.mood + 1 : 3),
+        // Legacy mood 1-5 (index 0-4 → 1-5)
+        mood: formData.mood !== null ? formData.mood + 1 : 3,
       }
       const res = await api.post('/diary', payload)
       clearInterval(interval)
@@ -762,6 +829,7 @@ export default function SubmitEntry() {
       clearInterval(interval)
       setSubmitState('idle')
       setAiProgress(0)
+      addToast(err?.response?.data?.message || 'Submission failed. Please try again.', 'error')
     }
   }
 
@@ -799,9 +867,8 @@ export default function SubmitEntry() {
         }}
       >
         {[1, 2, 3].map((s, i) => (
-          <>
+          <Fragment key={s}>
             <div
-              key={s}
               style={{
                 width: '32px',
                 height: '32px',
@@ -840,7 +907,7 @@ export default function SubmitEntry() {
                 }}
               />
             )}
-          </>
+          </Fragment>
         ))}
       </div>
 
