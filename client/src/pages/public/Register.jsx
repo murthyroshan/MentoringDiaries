@@ -16,6 +16,13 @@ import ErrorToast         from '../../components/auth/ErrorToast'
 import ScrambleText       from '../../components/auth/ScrambleText'
 
 // ── Zod schema ────────────────────────────────────────────────────────────────
+const DEPT_SECTIONS = {
+  CSE:  ['A', 'B', 'C', 'D'],
+  AIML: ['A', 'B'],
+  CS:   ['A', 'B'],
+  DS:   ['A', 'B'],
+}
+
 const schema = z.object({
   name:        z.string().min(2, 'Full name must be at least 2 characters'),
   email:       z.string().min(1, 'Email is required').email('Please enter a valid email address'),
@@ -24,7 +31,23 @@ const schema = z.object({
   phone:       z.string().optional(),
   year:        z.string().optional(),
   role:        z.enum(['student', 'mentor', 'admin'], { required_error: 'Please select a role' }),
+  department:  z.string().optional(),
+  section:     z.string().optional(),
+  roll_number: z.union([z.string(), z.number()]).optional(),
   terms:       z.boolean().refine(v => v === true, { message: 'You must accept the terms' }),
+}).superRefine((data, ctx) => {
+  if (data.role === 'student') {
+    if (!data.department || !DEPT_SECTIONS[data.department]) {
+      ctx.addIssue({ path: ['department'], code: z.ZodIssueCode.custom, message: 'Department is required for students' })
+    }
+    if (!data.section) {
+      ctx.addIssue({ path: ['section'], code: z.ZodIssueCode.custom, message: 'Section is required for students' })
+    }
+    const roll = Number(data.roll_number)
+    if (!roll || roll < 1 || roll > 10 || !Number.isInteger(roll)) {
+      ctx.addIssue({ path: ['roll_number'], code: z.ZodIssueCode.custom, message: 'Roll number must be 1–10' })
+    }
+  }
 })
 
 // ── Spinner ───────────────────────────────────────────────────────────────────
@@ -398,7 +421,7 @@ export default function Register() {
   const { register, handleSubmit, watch, setValue, trigger, formState: { errors } } = useForm({
     resolver:      zodResolver(schema),
     mode:          'onBlur',
-    defaultValues: { name:'', email:'', password:'', institution:'', phone:'', year:'', role:'', terms:false },
+    defaultValues: { name:'', email:'', password:'', institution:'', phone:'', year:'', role:'', department:'', section:'', roll_number:'', terms:false },
   })
 
   const values = watch()
@@ -435,16 +458,23 @@ export default function Register() {
     setTermsErr('')
     setBtnState('loading')
     try {
-      const res = await api.post('/auth/register', {
-        name: data.name, email: data.email, password: data.password,
-        institution: data.institution,
-        phone: data.phone || undefined,
-        year:  data.year  || undefined,
-        role:  data.role,
-      })
-      loginStore(res.data.user)
+      const payload = {
+        name:     data.name,
+        email:    data.email,
+        password: data.password,
+        role:     data.role,
+      }
+      if (data.role === 'student') {
+        payload.department  = data.department
+        payload.section     = data.section
+        payload.roll_number = Number(data.roll_number)
+        payload.batch       = data.year ? `2023-2027` : undefined
+      }
+      const res = await api.post('/auth/register', payload)
+      const user = res.data?.data?.user || res.data?.user
+      loginStore(user)
       setBtnState('success')
-      setTimeout(() => navigateByRole(res.data.user.role), 900)
+      setTimeout(() => navigateByRole(user.role), 900)
     } catch (err) {
       setBtnState('idle')
       setToastMsg(err?.response?.data?.message || 'Something went wrong. Please try again.')
@@ -643,6 +673,85 @@ export default function Register() {
                           <p style={{ fontSize:'11px', color:'#EF4444', margin:0, paddingLeft:'4px' }}>
                             {errors.role.message}
                           </p>
+                        )}
+
+                        {/* Student academic fields */}
+                        {values.role === 'student' && (
+                          <div style={{ display:'flex', flexDirection:'column', gap:'8px', paddingTop:'4px' }}>
+                            {/* Department */}
+                            <div>
+                              <label style={{ display:'block', fontSize:'12px', color:'rgba(242,240,232,0.5)', marginBottom:'6px' }}>
+                                Department <span style={{ color:'#EF4444' }}>*</span>
+                              </label>
+                              <select
+                                {...register('department')}
+                                onChange={e => {
+                                  setValue('department', e.target.value, { shouldValidate: true })
+                                  setValue('section', '', { shouldValidate: false })
+                                }}
+                                style={{
+                                  width:'100%', padding:'12px 14px', borderRadius:'12px',
+                                  background:'rgba(255,255,255,0.04)',
+                                  border:`1px solid ${errors.department ? '#EF4444' : 'rgba(255,255,255,0.1)'}`,
+                                  color: values.department ? '#F2F0E8' : 'rgba(242,240,232,0.4)',
+                                  fontSize:'13px', fontFamily:'inherit', cursor:'pointer',
+                                  outline:'none', appearance:'none',
+                                }}
+                              >
+                                <option value="" disabled>Select department</option>
+                                {Object.keys(DEPT_SECTIONS).map(d => (
+                                  <option key={d} value={d} style={{ background:'#1a1a2e', color:'#F2F0E8' }}>{d}</option>
+                                ))}
+                              </select>
+                              {errors.department && <p style={{ fontSize:'11px', color:'#EF4444', margin:'3px 0 0 4px' }}>{errors.department.message}</p>}
+                            </div>
+
+                            {/* Section */}
+                            <div>
+                              <label style={{ display:'block', fontSize:'12px', color:'rgba(242,240,232,0.5)', marginBottom:'6px' }}>
+                                Section <span style={{ color:'#EF4444' }}>*</span>
+                              </label>
+                              <select
+                                {...register('section')}
+                                onChange={e => setValue('section', e.target.value, { shouldValidate: true })}
+                                disabled={!values.department}
+                                style={{
+                                  width:'100%', padding:'12px 14px', borderRadius:'12px',
+                                  background:'rgba(255,255,255,0.04)',
+                                  border:`1px solid ${errors.section ? '#EF4444' : 'rgba(255,255,255,0.1)'}`,
+                                  color: values.section ? '#F2F0E8' : 'rgba(242,240,232,0.4)',
+                                  fontSize:'13px', fontFamily:'inherit', cursor: values.department ? 'pointer' : 'not-allowed',
+                                  outline:'none', appearance:'none', opacity: values.department ? 1 : 0.5,
+                                }}
+                              >
+                                <option value="" disabled>Select section</option>
+                                {(DEPT_SECTIONS[values.department] || []).map(s => (
+                                  <option key={s} value={s} style={{ background:'#1a1a2e', color:'#F2F0E8' }}>{s}</option>
+                                ))}
+                              </select>
+                              {errors.section && <p style={{ fontSize:'11px', color:'#EF4444', margin:'3px 0 0 4px' }}>{errors.section.message}</p>}
+                            </div>
+
+                            {/* Roll Number */}
+                            <div>
+                              <label style={{ display:'block', fontSize:'12px', color:'rgba(242,240,232,0.5)', marginBottom:'6px' }}>
+                                Roll Number (1–10) <span style={{ color:'#EF4444' }}>*</span>
+                              </label>
+                              <input
+                                type="number"
+                                min={1} max={10}
+                                {...register('roll_number')}
+                                placeholder="e.g. 3"
+                                style={{
+                                  width:'100%', padding:'12px 14px', borderRadius:'12px', boxSizing:'border-box',
+                                  background:'rgba(255,255,255,0.04)',
+                                  border:`1px solid ${errors.roll_number ? '#EF4444' : 'rgba(255,255,255,0.1)'}`,
+                                  color:'#F2F0E8', fontSize:'13px', fontFamily:'inherit', outline:'none',
+                                }}
+                              />
+                              {errors.roll_number && <p style={{ fontSize:'11px', color:'#EF4444', margin:'3px 0 0 4px' }}>{errors.roll_number.message}</p>}
+                            </div>
+                          </div>
                         )}
 
                         {/* Terms */}

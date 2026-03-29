@@ -1,12 +1,11 @@
-const Notification = require('../models/Notification');
+const queries = require('../database/queries');
+const db = require('../database/db');
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
 const logger = require('../utils/logger');
 
 let io;
-const userSocketMap = {}; // userId -> socketId
+const userSocketMap = {};
 
-// Parse raw cookie header string into a key/value map.
 function parseCookies(cookieHeader) {
     const cookies = {};
     if (!cookieHeader) return cookies;
@@ -20,7 +19,6 @@ function parseCookies(cookieHeader) {
     return cookies;
 }
 
-// Mirror the same origin-parsing logic as app.js so both layers stay in sync.
 const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5173')
     .split(',')
     .map((o) => o.trim())
@@ -36,9 +34,7 @@ function initSocket(server) {
         },
     });
 
-    // Authenticate every socket connection using the same httpOnly cookie
-    // that the REST API uses — no separate token handshake needed from the client.
-    io.use(async (socket, next) => {
+    io.use((socket, next) => {
         try {
             const cookies = parseCookies(socket.handshake.headers.cookie || '');
             const token = cookies.accessToken;
@@ -51,10 +47,10 @@ function initSocket(server) {
                 return next(new Error('Unauthorized: invalid token'));
             }
 
-            const user = await User.findById(decoded.id).select('_id role isActive');
-            if (!user || !user.isActive) return next(new Error('Unauthorized: user not found'));
+            const user = queries.findUserById(decoded.id);
+            if (!user || !user.is_active) return next(new Error('Unauthorized: user not found'));
 
-            socket.userId = user._id.toString();
+            socket.userId = String(user.id);
             socket.userRole = user.role;
             next();
         } catch {
@@ -66,16 +62,14 @@ function initSocket(server) {
         logger.info({ socketId: socket.id, userId: socket.userId }, 'Socket connected');
 
         socket.on('join', (userId) => {
-            // Only allow users to join their own room — prevents impersonation.
-            if (userId && userId === socket.userId) {
-                socket.join(userId);
-                userSocketMap[userId] = socket.id;
+            if (userId && String(userId) === socket.userId) {
+                socket.join(String(userId));
+                userSocketMap[String(userId)] = socket.id;
                 logger.info({ userId }, 'User joined socket room');
             }
         });
 
         socket.on('join-admin', () => {
-            // Only admins may join the admin broadcast room.
             if (socket.userRole !== 'admin') return;
             socket.join('admins');
             logger.info({ userId: socket.userId }, 'Admin joined admin socket room');
@@ -97,35 +91,33 @@ function getIO() {
     return io;
 }
 
-async function notifyUserWithPersistence(userId, payload) {
+function notifyUserWithPersistence(userId, payload) {
     if (!userId || !payload?.message) return null;
 
-    let saved = null;
+    let savedId = null;
     try {
-        saved = await Notification.create({
-            user: userId,
-            type: payload.type || 'system:announcement',
-            title: payload.title || 'Notification',
-            message: payload.message,
-            metadata: payload.metadata || {},
-        });
+        savedId = queries.createNotification(
+            Number(userId),
+            payload.type || 'system:announcement',
+            payload.message,
+            payload.metadata?.entryId || payload.metadata?.sessionId || null
+        );
     } catch (error) {
         logger.error({ error: error.message, userId }, 'Failed to persist notification');
     }
 
     if (io) {
-        io.to(userId.toString()).emit(payload.type || 'system:announcement', {
+        io.to(String(userId)).emit(payload.type || 'system:announcement', {
             ...payload,
-            id: saved?._id,
+            id: savedId,
             read: false,
-            timestamp: saved?.createdAt || new Date(),
+            timestamp: new Date(),
         });
     }
 
-    return saved;
+    return savedId;
 }
 
-// Notify mentor when student submits an entry
 function notifyMentor(mentorId, entry) {
     if (!mentorId) return;
     notifyUserWithPersistence(mentorId, {
@@ -133,14 +125,13 @@ function notifyMentor(mentorId, entry) {
         title: 'New Diary Entry',
         message: 'A student has submitted a new diary entry.',
         metadata: {
-            entryId: entry._id,
+            entryId: entry._id || entry.id,
             studentName: entry.student?.name || 'A student',
-            riskLevel: entry.aiAnalysis?.riskLevel,
+            riskLevel: entry.aiAnalysis?.riskLevel || entry.ai_risk_level,
         },
     });
 }
 
-// Notify student when mentor responds
 function notifyStudent(studentId, entry) {
     if (!studentId) return;
     notifyUserWithPersistence(studentId, {
@@ -148,13 +139,12 @@ function notifyStudent(studentId, entry) {
         title: 'Mentor Response',
         message: 'Your mentor has reviewed your diary entry.',
         metadata: {
-            entryId: entry._id,
+            entryId: entry._id || entry.id,
             mentorName: entry.mentor?.name || 'Your mentor',
         },
     });
 }
 
-// Notify all admins for critical/high risk entries
 function notifyAdmins(entry) {
     if (!io) return;
     io.to('admins').emit('entry:critical', {
@@ -162,10 +152,10 @@ function notifyAdmins(entry) {
         title: 'Risk Alert',
         message: `High-risk diary entry flagged for ${entry.student?.name || 'a student'}.`,
         metadata: {
-            entryId: entry._id,
+            entryId: entry._id || entry.id,
             studentName: entry.student?.name,
-            riskLevel: entry.aiAnalysis?.riskLevel,
-            riskScore: entry.aiAnalysis?.riskScore,
+            riskLevel: entry.aiAnalysis?.riskLevel || entry.ai_risk_level,
+            riskScore: entry.aiAnalysis?.riskScore || entry.ai_risk_score,
         },
         timestamp: new Date(),
     });
@@ -179,4 +169,3 @@ module.exports = {
     notifyAdmins,
     notifyUserWithPersistence,
 };
-

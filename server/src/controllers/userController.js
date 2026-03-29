@@ -1,52 +1,63 @@
-const mongoose = require('mongoose');
-const User = require('../models/User');
-const DiaryEntry = require('../models/DiaryEntry');
-const MentoringSession = require('../models/MentoringSession');
+const queries = require('../database/queries');
+const db = require('../database/db');
 const { notifyUserWithPersistence } = require('../socket');
-const { idsEqual, canAccessStudentData } = require('../utils/accessControl');
 const { getPagination } = require('../utils/pagination');
-const { buildSafeSearchRegex } = require('../utils/query');
+
+function safeUser(u) {
+    if (!u) return null;
+    const { password_hash, refresh_token, ...safe } = u;
+    return safe;
+}
 
 // GET /api/users
-exports.getUsers = async (req, res, next) => {
+exports.getUsers = (req, res, next) => {
     try {
-        const { role, search } = req.query;
-        const query = { isActive: true };
+        const { role, department, section, is_active, search } = req.query;
         const { page, limit, skip } = getPagination(req.query);
 
-        if (role !== undefined) {
-            if (typeof role !== 'string' || !['student', 'mentor', 'admin'].includes(role)) {
-                return res.status(400).json({ success: false, message: 'Invalid role filter.' });
-            }
-            query.role = role;
-        }
+        let sql = `
+            SELECT u.id, u.email, u.name, u.role, u.department, u.section, u.roll_number,
+                   u.batch, u.current_semester, u.mentor_id, u.is_active, u.last_login, u.created_at,
+                   m.name as mentor_name, m.email as mentor_email
+            FROM users u
+            LEFT JOIN users m ON m.id = u.mentor_id
+            WHERE 1=1
+        `;
+        const params = [];
 
-        // Mentors can only list students assigned to them.
         if (req.user.role === 'mentor') {
-            query.role = 'student';
-            query.assignedMentor = req.user._id;
+            sql += ' AND u.mentor_id = ? AND u.role = ?';
+            params.push(req.user.id, 'student');
+        } else {
+            if (role !== undefined) {
+                if (!['student', 'mentor', 'admin'].includes(role)) {
+                    return res.status(400).json({ success: false, message: 'Invalid role filter.' });
+                }
+                sql += ' AND u.role = ?'; params.push(role);
+            }
         }
 
-        const safeSearch = buildSafeSearchRegex(search);
-        if (safeSearch) {
-            query.$or = [
-                { name: safeSearch },
-                { email: safeSearch },
-                { department: safeSearch },
-            ];
+        if (department) { sql += ' AND u.department = ?'; params.push(department); }
+        if (section) { sql += ' AND u.section = ?'; params.push(section); }
+        if (is_active !== undefined) { sql += ' AND u.is_active = ?'; params.push(is_active === 'true' || is_active === '1' ? 1 : 0); }
+        else { sql += ' AND u.is_active = 1'; }
+
+        if (search) {
+            const s = `%${search.replace(/[%_]/g, '\\$&').slice(0, 80)}%`;
+            sql += ' AND (u.name LIKE ? OR u.email LIKE ? OR u.department LIKE ?)';
+            params.push(s, s, s);
         }
 
-        const [users, total] = await Promise.all([
-            User.find(query)
-                .select('-password -refreshToken')
-                .populate('assignedMentor', 'name email')
-                .sort({ createdAt: -1 })
-                .skip(skip)
-                .limit(limit),
-            User.countDocuments(query),
-        ]);
+        const total = db.prepare(`SELECT COUNT(*) as n FROM (${sql})`).get(...params).n;
+        sql += ' ORDER BY u.created_at DESC LIMIT ? OFFSET ?';
+        params.push(limit, skip);
 
-        res.json({
+        const users = db.prepare(sql).all(...params).map(u => ({
+            ...safeUser(u),
+            mentor: u.mentor_id ? { id: u.mentor_id, name: u.mentor_name, email: u.mentor_email } : null,
+        }));
+
+        return res.json({
             success: true,
             data: users,
             pagination: { total, page, limit, pages: Math.ceil(total / limit) },
@@ -57,174 +68,134 @@ exports.getUsers = async (req, res, next) => {
 };
 
 // GET /api/users/:id
-exports.getUserById = async (req, res, next) => {
+exports.getUserById = (req, res, next) => {
     try {
-        const user = await User.findById(req.params.id)
-            .select('-password -refreshToken')
-            .populate('assignedMentor', 'name email department')
-            .populate('assignedStudents', 'name email department batch');
+        const userId = Number(req.params.id);
+        const user = queries.findUserById(userId);
         if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
-        // Access rules:
-        // - Admin: all
-        // - Student: self only
-        // - Mentor: self + assigned students only
         if (req.user.role !== 'admin') {
-            if (req.user.role === 'student' && !idsEqual(req.user._id, user._id)) {
+            if (req.user.role === 'student' && req.user.id !== userId) {
                 return res.status(403).json({ success: false, message: 'Access denied.' });
             }
             if (req.user.role === 'mentor') {
-                if (idsEqual(req.user._id, user._id)) {
-                    return res.json({ success: true, data: user });
-                }
-                const allowed = await canAccessStudentData(req.user, user._id);
-                if (!allowed) {
-                    return res.status(403).json({ success: false, message: 'Access denied.' });
+                if (req.user.id !== userId) {
+                    // Check if this student is assigned to this mentor
+                    const s = db.prepare('SELECT mentor_id FROM users WHERE id = ?').get(userId);
+                    if (!s || s.mentor_id !== req.user.id) {
+                        return res.status(403).json({ success: false, message: 'Access denied.' });
+                    }
                 }
             }
         }
 
-        res.json({ success: true, data: user });
+        let mentorInfo = null;
+        if (user.mentor_id) mentorInfo = safeUser(queries.findUserById(user.mentor_id));
+
+        return res.json({ success: true, data: { ...safeUser(user), mentor: mentorInfo } });
     } catch (error) {
         next(error);
     }
 };
 
 // PATCH /api/users/:id
-exports.updateUser = async (req, res, next) => {
+exports.updateUser = (req, res, next) => {
     try {
-        const { name, department, batch, rollNumber, isActive, role } = req.body;
+        const userId = Number(req.params.id);
+        const { name, department, batch, roll_number, is_active, role } = req.body;
 
-        // Non-admins can only update themselves
-        if (req.user.role !== 'admin' && req.params.id !== req.user._id.toString()) {
+        if (req.user.role !== 'admin' && req.user.id !== userId) {
             return res.status(403).json({ success: false, message: 'Access denied.' });
         }
 
-        const updateData = {};
-        if (name) updateData.name = name;
-        if (department !== undefined) updateData.department = department;
-        if (batch !== undefined) updateData.batch = batch;
-        if (rollNumber !== undefined) updateData.rollNumber = rollNumber;
+        const updates = {};
+        if (name) updates.name = name.trim();
+        if (department !== undefined) updates.department = department;
+        if (batch !== undefined) updates.batch = batch;
+        if (roll_number !== undefined) updates.roll_number = Number(roll_number);
         if (req.user.role === 'admin') {
-            if (isActive !== undefined) updateData.isActive = isActive;
+            if (is_active !== undefined) updates.is_active = is_active ? 1 : 0;
             if (role !== undefined) {
-                const VALID_ROLES = ['student', 'mentor', 'admin'];
-                if (!VALID_ROLES.includes(role)) {
-                    return res.status(400).json({ success: false, message: 'Invalid role. Must be student, mentor, or admin.' });
+                if (!['student', 'mentor', 'admin'].includes(role)) {
+                    return res.status(400).json({ success: false, message: 'Invalid role.' });
                 }
-                updateData.role = role;
+                updates.role = role;
             }
         }
 
-        const user = await User.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true })
-            .select('-password -refreshToken');
+        if (Object.keys(updates).length === 0) {
+            return res.status(400).json({ success: false, message: 'No valid fields to update.' });
+        }
 
-        if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-        res.json({ success: true, data: user });
+        const fields = Object.keys(updates).map(k => `${k} = @${k}`).join(', ');
+        updates.id = userId;
+        const result = db.prepare(`UPDATE users SET ${fields} WHERE id = @id`).run(updates);
+
+        if (result.changes === 0) return res.status(404).json({ success: false, message: 'User not found' });
+
+        const user = queries.findUserById(userId);
+        return res.json({ success: true, data: safeUser(user) });
     } catch (error) {
         next(error);
     }
 };
 
 // PATCH /api/users/:studentId/assign-mentor
-exports.assignMentor = async (req, res, next) => {
+exports.assignMentor = (req, res, next) => {
     try {
+        const studentId = Number(req.params.studentId);
         const { mentorId } = req.body;
-        const student = await User.findById(req.params.studentId);
-        const mentor = await User.findById(mentorId);
 
-        if (!student || student.role !== 'student') {
-            return res.status(404).json({ success: false, message: 'Student not found' });
-        }
-        if (!mentor || mentor.role !== 'mentor') {
-            return res.status(404).json({ success: false, message: 'Mentor not found' });
-        }
+        const student = db.prepare('SELECT * FROM users WHERE id = ? AND role = ?').get(studentId, 'student');
+        const mentor = db.prepare('SELECT * FROM users WHERE id = ? AND role = ?').get(Number(mentorId), 'mentor');
 
-        // All three writes are atomic — a partial failure would orphan the student.
-        const session = await mongoose.startSession();
-        session.startTransaction();
-        try {
-            if (student.assignedMentor) {
-                await User.findByIdAndUpdate(
-                    student.assignedMentor,
-                    { $pull: { assignedStudents: student._id } },
-                    { session }
-                );
-            }
-            await User.findByIdAndUpdate(
-                student._id,
-                { assignedMentor: mentorId },
-                { session }
-            );
-            await User.findByIdAndUpdate(
-                mentorId,
-                { $addToSet: { assignedStudents: student._id } },
-                { session }
-            );
-            await DiaryEntry.updateMany(
-                { student: student._id, status: 'submitted' },
-                { mentor: mentorId },
-                { session }
-            );
-            await session.commitTransaction();
-        } catch (txErr) {
-            await session.abortTransaction();
-            throw txErr;
-        } finally {
-            session.endSession();
-        }
+        if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+        if (!mentor)  return res.status(404).json({ success: false, message: 'Mentor not found' });
 
-        // Notify old mentor they are no longer responsible for this student.
-        if (student.assignedMentor && !student.assignedMentor.equals(mentorId)) {
-            notifyUserWithPersistence(student.assignedMentor, {
+        const oldMentorId = student.mentor_id;
+
+        db.prepare('UPDATE users SET mentor_id = ? WHERE id = ?').run(Number(mentorId), studentId);
+
+        // Notify old mentor
+        if (oldMentorId && oldMentorId !== Number(mentorId)) {
+            notifyUserWithPersistence(oldMentorId, {
                 type: 'system:announcement',
                 title: 'Student Reassigned',
                 message: `${student.name} has been reassigned to another mentor.`,
-                metadata: { studentId: student._id },
+                metadata: { studentId },
             });
         }
-        // Notify new mentor they now have an additional student.
-        notifyUserWithPersistence(mentorId, {
+        // Notify new mentor
+        notifyUserWithPersistence(Number(mentorId), {
             type: 'system:announcement',
             title: 'New Student Assigned',
             message: `${student.name} has been assigned to you as a mentee.`,
-            metadata: { studentId: student._id },
+            metadata: { studentId },
         });
 
-        const updatedStudent = await User.findById(student._id).select('-password -refreshToken');
-        res.json({ success: true, message: 'Mentor assigned successfully', data: { student: updatedStudent, mentor } });
+        const updatedStudent = safeUser(queries.findUserById(studentId));
+        return res.json({ success: true, message: 'Mentor assigned successfully', data: { student: updatedStudent, mentor: safeUser(queries.findUserById(Number(mentorId))) } });
     } catch (error) {
         next(error);
     }
 };
 
 // DELETE /api/users/:id
-exports.deleteUser = async (req, res, next) => {
+exports.deleteUser = (req, res, next) => {
     try {
-        const user = await User.findByIdAndUpdate(req.params.id, { isActive: false }, { new: true });
+        const userId = Number(req.params.id);
+        const user = queries.findUserById(userId);
         if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
-        // Clean up relational data so deactivation doesn't leave orphaned records.
+        db.prepare('UPDATE users SET is_active = 0 WHERE id = ?').run(userId);
+
         if (user.role === 'student') {
-            // Archive the student's diary entries.
-            await DiaryEntry.updateMany({ student: user._id }, { $set: { status: 'archived' } });
-            // Detach from their mentor's student list.
-            if (user.assignedMentor) {
-                await User.findByIdAndUpdate(user.assignedMentor, {
-                    $pull: { assignedStudents: user._id },
-                });
-            }
+            db.prepare("UPDATE diary_entries SET status = 'archived' WHERE student_id = ?").run(userId);
         } else if (user.role === 'mentor') {
-            // Unassign all students that were linked to this mentor.
-            await User.updateMany(
-                { assignedMentor: user._id },
-                { $unset: { assignedMentor: '' } }
-            );
-            // Archive diary entries where this user was the reviewing mentor.
-            await DiaryEntry.updateMany({ mentor: user._id }, { $set: { mentor: null } });
+            db.prepare('UPDATE users SET mentor_id = NULL WHERE mentor_id = ?').run(userId);
         }
 
-        res.json({ success: true, message: 'User deactivated successfully' });
+        return res.json({ success: true, message: 'User deactivated successfully' });
     } catch (error) {
         next(error);
     }

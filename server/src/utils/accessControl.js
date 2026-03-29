@@ -1,33 +1,24 @@
-const User = require('../models/User');
+const db = require('../database/db');
 
-const idsEqual = (a, b) => String(a) === String(b);
+const idsEqual = (a, b) => Number(a) === Number(b);
 
-async function isMentorAssignedToStudent(mentorId, studentId) {
-    if (!mentorId || !studentId) return false;
-    const count = await User.countDocuments({
-        _id: studentId,
-        role: 'student',
-        isActive: true,
-        assignedMentor: mentorId,
-    });
-    return count > 0;
+function isMentorAssignedToStudent(mentorId, studentId) {
+    const row = db.prepare('SELECT id FROM users WHERE id = ? AND mentor_id = ? AND role = ? AND is_active = 1')
+        .get(Number(studentId), Number(mentorId), 'student');
+    return !!row;
 }
 
-async function getAssignedStudentIds(mentorId) {
-    if (!mentorId) return [];
-    const students = await User.find({
-        role: 'student',
-        isActive: true,
-        assignedMentor: mentorId,
-    }).select('_id').lean();
-    return students.map((s) => s._id);
+function getAssignedStudentIds(mentorId) {
+    const rows = db.prepare('SELECT id FROM users WHERE mentor_id = ? AND role = ? AND is_active = 1')
+        .all(Number(mentorId), 'student');
+    return rows.map(r => r.id);
 }
 
-async function canAccessStudentData(user, studentId) {
+function canAccessStudentData(user, studentId) {
     if (!user || !studentId) return false;
     if (user.role === 'admin') return true;
-    if (user.role === 'student') return idsEqual(user._id, studentId);
-    if (user.role === 'mentor') return isMentorAssignedToStudent(user._id, studentId);
+    if (user.role === 'student') return idsEqual(user.id, studentId);
+    if (user.role === 'mentor') return isMentorAssignedToStudent(user.id, studentId);
     return false;
 }
 

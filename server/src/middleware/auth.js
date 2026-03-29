@@ -1,9 +1,8 @@
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const queries = require('../database/queries');
 
-const auth = async (req, res, next) => {
+const auth = (req, res, next) => {
     try {
-        // Prefer httpOnly cookie, fall back to Authorization header
         const token =
             req.cookies?.accessToken ||
             (req.headers.authorization?.startsWith('Bearer ')
@@ -18,7 +17,6 @@ const auth = async (req, res, next) => {
         try {
             decoded = jwt.verify(token, process.env.JWT_SECRET);
         } catch (err) {
-            // ─── Distinct error messages for different JWT failures ───
             if (err.name === 'TokenExpiredError') {
                 return res.status(401).json({
                     success: false,
@@ -40,8 +38,8 @@ const auth = async (req, res, next) => {
             });
         }
 
-        const user = await User.findById(decoded.id).select('+refreshToken');
-        if (!user || !user.isActive) {
+        const user = queries.findUserById(decoded.id);
+        if (!user || !user.is_active) {
             return res.status(401).json({ success: false, message: 'Account not found or deactivated.' });
         }
 

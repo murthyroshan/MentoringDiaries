@@ -1,7 +1,16 @@
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const bcrypt = require('bcryptjs');
+const queries = require('../database/queries');
+const db = require('../database/db');
 
-const generateTokens = (userId) => {
+const VALID_SECTIONS = {
+    CSE:  ['A', 'B', 'C', 'D'],
+    AIML: ['A', 'B'],
+    CS:   ['A', 'B'],
+    DS:   ['A', 'B'],
+};
+
+function generateTokens(userId) {
     const accessToken = jwt.sign({ id: userId }, process.env.JWT_SECRET, {
         expiresIn: process.env.JWT_EXPIRES_IN || '15m',
     });
@@ -9,75 +18,98 @@ const generateTokens = (userId) => {
         expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
     });
     return { accessToken, refreshToken };
-};
+}
 
-const setTokenCookies = (res, accessToken, refreshToken) => {
+function setTokenCookies(res, accessToken, refreshToken) {
+    const isProd = process.env.NODE_ENV === 'production';
     res.cookie('accessToken', accessToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: isProd,
         sameSite: 'lax',
-        maxAge: 15 * 60 * 1000, // 15 minutes
+        maxAge: 15 * 60 * 1000,
     });
     res.cookie('refreshToken', refreshToken, {
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
+        secure: isProd,
         sameSite: 'lax',
-        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+        maxAge: 7 * 24 * 60 * 60 * 1000,
     });
-};
+}
+
+function safeUser(u) {
+    if (!u) return null;
+    const { password_hash, refresh_token, ...safe } = u;
+    return safe;
+}
 
 exports.register = async (req, res, next) => {
     try {
-        const { name, email, password, role, department, batch, rollNumber, year } = req.body;
+        const { name, email, password, role, department, section, roll_number, batch } = req.body;
 
-        // SECURITY: Only student and mentor can self-register. Admins must be promoted by existing admin.
-        const allowedRoles = ['student', 'mentor'];
-        const userRole = allowedRoles.includes(role) ? role : 'student';
+        // Email domain check
+        const normEmail = (email || '').trim().toLowerCase();
+        if (!normEmail.endsWith('@gcet.edu.in')) {
+            return res.status(400).json({ success: false, message: 'Only @gcet.edu.in email addresses are allowed.' });
+        }
 
-        const existingUser = await User.findOne({ email });
-        if (existingUser) {
+        // Role whitelist
+        const userRole = ['student', 'mentor'].includes(role) ? role : 'student';
+
+        if (userRole === 'student') {
+            if (!department || !VALID_SECTIONS[department]) {
+                return res.status(400).json({ success: false, message: `Department must be one of: ${Object.keys(VALID_SECTIONS).join(', ')}.` });
+            }
+            if (!section || !VALID_SECTIONS[department].includes(section)) {
+                return res.status(400).json({ success: false, message: `Section must be one of: ${VALID_SECTIONS[department].join(', ')} for department ${department}.` });
+            }
+            const roll = Number(roll_number);
+            if (!roll || roll < 1 || roll > 10 || !Number.isInteger(roll)) {
+                return res.status(400).json({ success: false, message: 'Roll number must be an integer between 1 and 10.' });
+            }
+        }
+
+        // Unique email check
+        const existing = queries.findUserByEmail(normEmail);
+        if (existing) {
             return res.status(409).json({ success: false, message: 'Email already registered.' });
         }
 
-        // Auto-calculate semester from year (odd semester default)
-        const parsedYear = year ? Number(year) : null;
-        const autoSemester = parsedYear ? (parsedYear - 1) * 2 + 1 : undefined;
+        // Password strength
+        if (!password || password.length < 8 || !/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
+            return res.status(400).json({ success: false, message: 'Password must be at least 8 characters, contain an uppercase letter and a number.' });
+        }
 
-        const user = await User.create({
-            name,
-            email,
-            password,
+        const passwordHash = await bcrypt.hash(password, 12);
+
+        const stmt = db.prepare(`
+            INSERT INTO users (email, password_hash, name, role, department, section, roll_number, batch, current_semester, is_active)
+            VALUES (@email, @password_hash, @name, @role, @department, @section, @roll_number, @batch, @current_semester, 1)
+        `);
+        const result = stmt.run({
+            email: normEmail,
+            password_hash: passwordHash,
+            name: (name || '').trim(),
             role: userRole,
-            department,
-            batch,
-            rollNumber,
-            year: parsedYear || undefined,
-            semester: autoSemester,
-            // ID card photo uploaded via multer (optional)
-            idCardPhoto: req.file ? `/uploads/${req.file.filename}` : '',
+            department: department || null,
+            section: section || null,
+            roll_number: userRole === 'student' ? Number(roll_number) : null,
+            batch: batch || null,
+            current_semester: userRole === 'student' ? 1 : null,
         });
 
-        const { accessToken, refreshToken } = generateTokens(user._id);
+        const userId = result.lastInsertRowid;
+        const { accessToken, refreshToken } = generateTokens(userId);
 
-        // Save refresh token
-        user.refreshToken = refreshToken;
-        user.lastLogin = new Date();
-        await user.save({ validateBeforeSave: false });
-
+        queries.updateUserRefreshToken(userId, refreshToken);
+        queries.updateUserLastLogin(userId);
         setTokenCookies(res, accessToken, refreshToken);
 
-        res.status(201).json({
+        const user = queries.findUserById(userId);
+
+        return res.status(201).json({
             success: true,
             message: 'Registration successful',
-            user: {
-                _id: user._id,
-                name: user.name,
-                email: user.email,
-                role: user.role,
-                department: user.department,
-                batch: user.batch,
-                initials: user.initials,
-            },
+            data: { user: safeUser(user) },
         });
     } catch (error) {
         next(error);
@@ -87,39 +119,31 @@ exports.register = async (req, res, next) => {
 exports.login = async (req, res, next) => {
     try {
         const { email, password } = req.body;
+        const normEmail = (email || '').trim().toLowerCase();
 
-        const user = await User.findOne({ email }).select('+password +refreshToken');
-        if (!user || !(await user.comparePassword(password))) {
+        const user = queries.findUserByEmailWithPassword(normEmail);
+        if (!user) {
             return res.status(401).json({ success: false, message: 'Invalid email or password.' });
         }
 
-        if (!user.isActive) {
+        const match = await bcrypt.compare(password, user.password_hash);
+        if (!match) {
+            return res.status(401).json({ success: false, message: 'Invalid email or password.' });
+        }
+
+        if (!user.is_active) {
             return res.status(401).json({ success: false, message: 'Account is deactivated.' });
         }
 
-        const { accessToken, refreshToken } = generateTokens(user._id);
-
-        user.refreshToken = refreshToken;
-        user.lastLogin = new Date();
-        await user.save({ validateBeforeSave: false });
-
+        const { accessToken, refreshToken } = generateTokens(user.id);
+        queries.updateUserRefreshToken(user.id, refreshToken);
+        queries.updateUserLastLogin(user.id);
         setTokenCookies(res, accessToken, refreshToken);
 
-        res.json({
+        return res.json({
             success: true,
             message: 'Login successful',
-            user: {
-                _id: user._id,
-                name: user.name,
-                email: user.email,
-                role: user.role,
-                department: user.department,
-                batch: user.batch,
-                rollNumber: user.rollNumber,
-                assignedMentor: user.assignedMentor,
-                initials: user.initials,
-                lastLogin: user.lastLogin,
-            },
+            data: { user: safeUser(queries.findUserById(user.id)) },
         });
     } catch (error) {
         next(error);
@@ -140,18 +164,16 @@ exports.refresh = async (req, res, next) => {
             return res.status(401).json({ success: false, message: 'Invalid or expired refresh token.' });
         }
 
-        const user = await User.findById(decoded.id).select('+refreshToken');
-        if (!user || user.refreshToken !== token) {
+        const user = db.prepare('SELECT id, refresh_token, is_active FROM users WHERE id = ?').get(decoded.id);
+        if (!user || user.refresh_token !== token) {
             return res.status(401).json({ success: false, message: 'Refresh token mismatch.' });
         }
 
-        const { accessToken, refreshToken: newRefreshToken } = generateTokens(user._id);
-        user.refreshToken = newRefreshToken;
-        await user.save({ validateBeforeSave: false });
-
+        const { accessToken, refreshToken: newRefreshToken } = generateTokens(user.id);
+        queries.updateUserRefreshToken(user.id, newRefreshToken);
         setTokenCookies(res, accessToken, newRefreshToken);
 
-        res.json({ success: true, message: 'Token refreshed' });
+        return res.json({ success: true, message: 'Token refreshed' });
     } catch (error) {
         next(error);
     }
@@ -160,11 +182,11 @@ exports.refresh = async (req, res, next) => {
 exports.logout = async (req, res, next) => {
     try {
         if (req.user) {
-            await User.findByIdAndUpdate(req.user._id, { refreshToken: null });
+            queries.updateUserRefreshToken(req.user.id, null);
         }
         res.clearCookie('accessToken');
         res.clearCookie('refreshToken');
-        res.json({ success: true, message: 'Logged out successfully' });
+        return res.json({ success: true, message: 'Logged out successfully' });
     } catch (error) {
         next(error);
     }
@@ -172,11 +194,19 @@ exports.logout = async (req, res, next) => {
 
 exports.getMe = async (req, res, next) => {
     try {
-        const user = await User.findById(req.user._id)
-            .populate('assignedMentor', 'name email department')
-            .populate('assignedStudents', 'name email department batch');
+        const user = queries.findUserById(req.user.id);
         if (!user) return res.status(404).json({ success: false, message: 'User not found' });
-        res.json({ success: true, user });
+
+        // Attach mentor info if student
+        let mentorInfo = null;
+        if (user.mentor_id) {
+            mentorInfo = queries.findUserById(user.mentor_id);
+        }
+
+        return res.json({
+            success: true,
+            data: { user: { ...safeUser(user), mentor: mentorInfo ? safeUser(mentorInfo) : null } },
+        });
     } catch (error) {
         next(error);
     }

@@ -240,7 +240,7 @@ export default function Portfolio() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: '12px' }}>
             {(portfolio?.recentEntries ?? []).map((entry, i) => (
               <motion.div
-                key={entry._id}
+                key={entry.id}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.05, duration: 0.3 }}
@@ -249,11 +249,13 @@ export default function Portfolio() {
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
                   <span style={{ fontSize: '18px' }}>{getMoodEmoji(entry.mood)}</span>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'rgba(232,184,75,0.8)' }}>Wk {entry.week}</span>
-                  <span style={{ marginLeft: 'auto', fontSize: '10px', padding: '1px 6px', borderRadius: '999px', background: `${getRiskColor(entry.riskScore)}15`, color: getRiskColor(entry.riskScore) }}>{entry.riskScore}</span>
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'rgba(232,184,75,0.8)' }}>
+                    {entry.week ? `Wk ${entry.week}` : entry.periodLabel || '—'}
+                  </span>
+                  <span style={{ marginLeft: 'auto', fontSize: '10px', padding: '1px 6px', borderRadius: '999px', background: `${getRiskColor(entry.riskScore ?? 0)}15`, color: getRiskColor(entry.riskScore ?? 0) }}>{entry.riskScore ?? 0}</span>
                 </div>
                 <p style={{ fontSize: '11px', color: 'rgba(242,240,232,0.45)', margin: 0, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                  {entry.reflection}
+                  {entry.reflection || ''}
                 </p>
                 <div style={{ fontSize: '10px', color: 'rgba(242,240,232,0.2)', marginTop: '8px' }}>
                   {format(new Date(entry.createdAt), 'MMM d')}

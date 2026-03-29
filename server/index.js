@@ -20,7 +20,6 @@ initSocket(server);
 
 const PORT = process.env.PORT || 5000;
 
-// Connect to DB first; only start accepting traffic once the connection is ready.
 connectDB()
     .then(() => {
         server.listen(PORT, () => {
@@ -31,7 +30,7 @@ connectDB()
         });
     })
     .catch((err) => {
-        logger.error({ error: err.message }, 'Failed to connect to DB — server not started');
+        logger.error({ error: err.message }, 'Failed to initialize DB — server not started');
         process.exit(1);
     });
 

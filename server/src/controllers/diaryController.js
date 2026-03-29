@@ -1,8 +1,9 @@
-const DiaryEntry = require('../models/DiaryEntry');
-const User = require('../models/User');
+const queries = require('../database/queries');
+const db = require('../database/db');
+const { analyzeEntry, generateMentorSuggestion } = require('../services/aiService');
+const { notifyMentor, notifyStudent, notifyAdmins } = require('../socket');
+const { getPagination } = require('../utils/pagination');
 
-// Returns the current academic year string, e.g. "2025-26".
-// Months June (5) onward belong to the new academic year.
 function currentAcademicYear() {
     const now = new Date();
     const y = now.getFullYear();
@@ -10,291 +11,251 @@ function currentAcademicYear() {
         ? `${y}-${String(y + 1).slice(2)}`
         : `${y - 1}-${String(y).slice(2)}`;
 }
-const { analyzeEntry, generateMentorSuggestion } = require('../services/aiService');
-const { notifyMentor, notifyStudent, notifyAdmins } = require('../socket');
-const { getAssignedStudentIds, canAccessStudentData, idsEqual } = require('../utils/accessControl');
-const { getPagination } = require('../utils/pagination');
-const { buildSafeSearchRegex } = require('../utils/query');
 
-// GET /api/diary/check-range?startDate=&endDate= - Check overlap before submit
-exports.checkRange = async (req, res, next) => {
+function formatEntry(row) {
+    if (!row) return null;
+    return {
+        ...row,
+        ai_flags: safeJson(row.ai_flags, []),
+        ai_key_concerns: safeJson(row.ai_key_concerns, []),
+        student: {
+            id: row.student_id,
+            name: row.student_name,
+            email: row.student_email,
+            department: row.student_department,
+            section: row.student_section,
+            roll_number: row.student_roll_number,
+            batch: row.student_batch,
+        },
+        mentor: row.mentor_name ? {
+            name: row.mentor_name,
+            email: row.mentor_email,
+            department: row.mentor_department,
+        } : null,
+    };
+}
+
+function safeJson(val, fallback) {
+    try { return val ? JSON.parse(val) : fallback; } catch { return fallback; }
+}
+
+// GET /api/diary/check-range
+exports.checkRange = (req, res, next) => {
     try {
-        const { startDate, endDate } = req.query;
-        if (!startDate || !endDate) {
-            return res.status(400).json({ success: false, message: 'startDate and endDate are required.' });
+        const { week_number, academic_year, semester } = req.query;
+        if (!week_number) {
+            return res.status(400).json({ success: false, message: 'week_number is required.' });
         }
-        const start = new Date(startDate);
-        const end = new Date(endDate);
-        if (isNaN(start) || isNaN(end)) {
-            return res.status(400).json({ success: false, message: 'Invalid date format.' });
-        }
-        if (end <= start) {
-            return res.status(400).json({ success: false, message: 'endDate must be after startDate.' });
-        }
-        const diffDays = (end - start) / 86400000;
-        if (diffDays > 7) {
-            return res.json({ success: true, overlap: false, rangeError: true, message: 'Date range must not exceed 7 days.' });
-        }
-        const overlap = await DiaryEntry.findOne({
-            student: req.user._id,
-            startDate: { $lte: end },
-            endDate: { $gte: start },
-        }).select('_id startDate endDate');
+
+        const existing = db.prepare(`
+            SELECT id, week_number FROM diary_entries
+            WHERE student_id = ? AND week_number = ? AND academic_year = ? AND semester = ?
+        `).get(req.user.id, Number(week_number), academic_year || currentAcademicYear(), Number(semester || 1));
+
         return res.json({
             success: true,
-            overlap: !!overlap,
+            overlap: !!existing,
             rangeError: false,
-            message: overlap ? 'An entry already exists overlapping this date range.' : 'Date range is available.',
+            message: existing ? 'An entry already exists for this week.' : 'Week is available.',
         });
     } catch (error) {
         next(error);
     }
 };
 
-// POST /api/diary - Create new entry (Section A–E + date range)
+// POST /api/diary
 exports.createEntry = async (req, res, next) => {
     try {
         const {
-            startDate, endDate, week,
-            academicYear, semester,
-            content,
+            week_number, academic_year, semester,
+            start_date, end_date,
+            mood, weekly_difficulty,
+            attendance_explanation,
+            reflection, challenges,
             subjectRatings,
-            problemsFaced,
-            attendancePercentage, attendanceExplanation,
-            emotionalRating,
-            academicPerformance, challenges, goals, mood, subjectsOfConcern,
         } = req.body;
 
-        // ── Date range validation ──────────────────────────────────
-        if (startDate && endDate) {
-            const start = new Date(startDate);
-            const end = new Date(endDate);
-            if (end <= start) {
-                return res.status(400).json({ success: false, message: 'endDate must be after startDate.' });
-            }
-            const diffDays = (end - start) / 86400000;
-            if (diffDays > 7) {
-                return res.status(400).json({ success: false, message: 'Date range must not exceed 7 days.' });
-            }
-            // Check for overlapping entries
-            const overlap = await DiaryEntry.findOne({
-                student: req.user._id,
-                startDate: { $lte: end },
-                endDate: { $gte: start },
-            }).select('_id startDate endDate');
-            if (overlap) {
-                return res.status(409).json({
-                    success: false,
-                    message: `An entry already exists overlapping this date range.`,
-                });
-            }
+        if (!reflection || String(reflection).trim().length < 20) {
+            return res.status(400).json({ success: false, message: 'Reflection must be at least 20 characters.' });
         }
 
-        // ── Attendance explanation check ───────────────────────────
-        if (attendancePercentage !== undefined && Number(attendancePercentage) < 75 && !attendanceExplanation) {
+        const yr = academic_year || currentAcademicYear();
+        const sem = Number(semester || req.user.current_semester || 1);
+        const weekNum = Number(week_number || 1);
+
+        // Fetch attendance from DB
+        let attendance_pct = null;
+        if (req.user.department && req.user.section && req.user.roll_number) {
+            const attRow = queries.getAttendance(
+                req.user.department,
+                req.user.section,
+                req.user.roll_number,
+                weekNum,
+                yr,
+                sem
+            );
+            if (attRow) attendance_pct = attRow.cumulative_pct;
+        }
+
+        // Attendance explanation required if below 75%
+        if (attendance_pct !== null && attendance_pct < 75 && !attendance_explanation) {
             return res.status(400).json({
                 success: false,
                 message: 'Attendance explanation is required when attendance is below 75%.',
             });
         }
 
-        // ── Compute avgSubjectRating for AI ───────────────────────
-        let avgSubjectRating = null;
+        // Parse subject ratings
         let parsedRatings = [];
         if (Array.isArray(subjectRatings)) {
             parsedRatings = subjectRatings;
         } else if (subjectRatings) {
-            try {
-                parsedRatings = JSON.parse(subjectRatings);
-                if (!Array.isArray(parsedRatings)) {
-                    return res.status(400).json({ success: false, message: 'subjectRatings must be an array.' });
-                }
-            } catch {
+            try { parsedRatings = JSON.parse(subjectRatings); } catch {
                 return res.status(400).json({ success: false, message: 'Invalid subjectRatings format.' });
             }
         }
 
+        // Avg subject rating for AI
+        let avgSubjectRating = null;
         if (parsedRatings.length > 0) {
             const sum = parsedRatings.reduce((acc, s) => acc + (Number(s.rating) || 3), 0);
             avgSubjectRating = Math.round((sum / parsedRatings.length) * 10) / 10;
         }
 
-        // ── Consecutive high-risk count ────────────────────────────
-        const recentRisk = await DiaryEntry.find({ student: req.user._id })
-            .sort({ createdAt: -1 })
-            .limit(4)
-            .select('aiAnalysis.riskLevel');
-        const consecutiveHighCount = recentRisk.filter(
-            e => ['high', 'critical'].includes(e.aiAnalysis?.riskLevel)
+        // Consecutive high-risk count
+        const recentEntries = db.prepare(`
+            SELECT ai_risk_level FROM diary_entries
+            WHERE student_id = ? ORDER BY created_at DESC LIMIT 4
+        `).all(req.user.id);
+        const consecutiveHighCount = recentEntries.filter(e =>
+            ['high', 'critical'].includes(e.ai_risk_level)
         ).length;
 
-        // ── Build full text for AI analysis ───────────────────────
-        const problemText = problemsFaced
-            ? [problemsFaced.academic, problemsFaced.personal, problemsFaced.other].filter(Boolean).join(' ')
-            : [challenges, academicPerformance].filter(Boolean).join(' ');
-        const fullText = [content, problemText, goals].filter(Boolean).join('\n\n');
+        // Build text for AI
+        const fullText = [reflection, challenges].filter(Boolean).join('\n\n');
 
-        // ── Run AI analysis (multi-factor) ────────────────────────
-        const parsedProblems = problemsFaced && typeof problemsFaced === 'object'
-            ? problemsFaced
-            : (() => { try { return JSON.parse(problemsFaced || '{}'); } catch { return {}; } })();
-
+        // Run AI analysis
         const aiAnalysis = await analyzeEntry(
             fullText,
-            req.user._id,
+            req.user.id,
             {
-                attendancePercentage: attendancePercentage !== undefined ? Number(attendancePercentage) : undefined,
-                attendanceExplanation,
+                attendancePercentage: attendance_pct !== null ? attendance_pct : undefined,
+                attendanceExplanation: attendance_explanation,
                 avgSubjectRating,
-                emotionalRating: Number(emotionalRating || mood || 3),
-                academicPerformance: String(academicPerformance || ''),
-                problemsFaced: parsedProblems,
+                emotionalRating: Number(mood || 3),
             },
             consecutiveHighCount
         );
 
-        // ── Student's assigned mentor ─────────────────────────────
-        const studentData = await User.findById(req.user._id).populate('assignedMentor');
-
-        // ── Subjects of concern = subjects rated ≤ 2 ─────────────
-        const autoSubjectsOfConcern = parsedRatings
-            .filter(s => Number(s.rating) <= 2)
-            .map(s => s.name);
-
-        const entry = await DiaryEntry.create({
-            student: req.user._id,
-            mentor: studentData?.assignedMentor?._id || null,
-            startDate: startDate ? new Date(startDate) : undefined,
-            endDate: endDate ? new Date(endDate) : undefined,
-            week: week ? Number(week) : undefined,
-            academicYear: academicYear || currentAcademicYear(),
-            semester: semester ? Number(semester) : undefined,
-            // Section A
-            content,
-            // Section B
-            subjectRatings: parsedRatings,
-            // Section C
-            problemsFaced: problemsFaced || {
-                academic: challenges || '',
-                personal: '',
-                other: '',
-            },
-            // Section D
-            attendancePercentage: attendancePercentage !== undefined ? Number(attendancePercentage) : undefined,
-            attendanceExplanation: attendanceExplanation || '',
-            // Section E
-            emotionalRating: Number(emotionalRating || mood || 3),
-            // Legacy compat fields
-            academicPerformance: academicPerformance || '',
-            challenges: challenges || '',
-            goals: goals || '',
-            mood: Number(mood || emotionalRating || 3),
-            subjectsOfConcern: subjectsOfConcern || autoSubjectsOfConcern,
-            // AI + file
-            aiAnalysis,
-            attachmentUrl: req.file ? `/uploads/${req.file.filename}` : '',
-            attachmentName: req.file ? req.file.originalname : '',
-        });
-
-        await entry.populate('student', 'name email department batch');
-        await entry.populate('mentor', 'name email');
-
-        // ── Notifications ─────────────────────────────────────────
-        if (studentData?.assignedMentor?._id) {
-            notifyMentor(studentData.assignedMentor._id, entry);
-        }
-        if (aiAnalysis.flagged && ['high', 'critical'].includes(aiAnalysis.riskLevel)) {
-            notifyAdmins(entry);
+        let entryId;
+        try {
+            entryId = queries.createEntry({
+                student_id: req.user.id,
+                week_number: weekNum,
+                academic_year: yr,
+                semester: sem,
+                start_date: start_date || null,
+                end_date: end_date || null,
+                mood: Number(mood || 3),
+                weekly_difficulty: weekly_difficulty ? Number(weekly_difficulty) : null,
+                attendance_pct,
+                attendance_explanation: attendance_explanation || null,
+                reflection: String(reflection).trim(),
+                challenges: challenges || null,
+                attachment_url: req.file ? `/uploads/${req.file.filename}` : null,
+                ai_risk_score: aiAnalysis.riskScore,
+                ai_sentiment: aiAnalysis.sentiment,
+                ai_risk_level: aiAnalysis.riskLevel,
+                ai_flags: JSON.stringify(aiAnalysis.keywords || []),
+                ai_summary: aiAnalysis.summary || null,
+                ai_key_concerns: JSON.stringify(aiAnalysis.keyConcerns || []),
+                ai_confidence: aiAnalysis.confidence || 0.56,
+                is_flagged: aiAnalysis.flagged ? 1 : 0,
+                status: 'submitted',
+            });
+        } catch (err) {
+            if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+                return res.status(409).json({
+                    success: false,
+                    message: 'An entry for this week already exists.',
+                });
+            }
+            throw err;
         }
 
-        res.status(201).json({ success: true, message: 'Diary entry submitted successfully', data: entry });
-    } catch (error) {
-        if (error.code === 11000) {
-            return res.status(409).json({
-                success: false,
-                message: 'An entry for this date range already exists.',
+        // Insert subject ratings
+        if (parsedRatings.length > 0) {
+            queries.createSubjectRatings(entryId, parsedRatings);
+        }
+
+        const entry = queries.getEntryById(entryId);
+        const subjectRatingRows = queries.getSubjectRatings(entryId);
+
+        // Notify mentor
+        if (entry && req.user.mentor_id) {
+            notifyMentor(req.user.mentor_id, {
+                _id: entryId,
+                student: { name: req.user.name },
+                aiAnalysis: { riskLevel: aiAnalysis.riskLevel },
             });
         }
+        if (aiAnalysis.flagged && ['high', 'critical'].includes(aiAnalysis.riskLevel)) {
+            notifyAdmins({
+                _id: entryId,
+                student: { name: req.user.name },
+                aiAnalysis,
+            });
+        }
+
+        return res.status(201).json({
+            success: true,
+            message: 'Diary entry submitted successfully',
+            data: { ...formatEntry(entry), subject_ratings: subjectRatingRows },
+        });
+    } catch (error) {
         next(error);
     }
 };
 
-// GET /api/diary - Get entries (role-filtered, with search/filter/sort/pagination)
-exports.getEntries = async (req, res, next) => {
+// GET /api/diary
+exports.getEntries = (req, res, next) => {
     try {
-        const { search, sentiment, riskLevel, status, startDate, endDate, sortBy = 'createdAt', sortOrder = 'desc', studentId, mentorId } = req.query;
-
-        const query = {};
+        const { status, is_flagged, semester, student_id } = req.query;
         const { page, limit, skip } = getPagination(req.query);
 
-        // Role-based filtering
-        if (req.user.role === 'student') {
-            query.student = req.user._id;
-        } else if (req.user.role === 'mentor') {
-            const assignedStudentIds = await getAssignedStudentIds(req.user._id);
-            if (assignedStudentIds.length === 0) {
-                return res.json({
-                    success: true,
-                    data: [],
-                    pagination: { total: 0, page, limit, pages: 0 },
-                });
-            }
+        const filters = {
+            limit,
+            offset: skip,
+            ...(status ? { status } : {}),
+            ...(is_flagged !== undefined ? { is_flagged: is_flagged === 'true' ? 1 : 0 } : {}),
+            ...(semester !== undefined ? { semester: Number(semester) } : {}),
+        };
 
-            if (studentId) {
-                const allowed = assignedStudentIds.some((id) => idsEqual(id, studentId));
-                if (!allowed) {
+        let entries;
+        if (req.user.role === 'student') {
+            entries = queries.getEntriesByStudent(req.user.id, filters);
+        } else if (req.user.role === 'mentor') {
+            if (student_id) {
+                // Verify student belongs to this mentor
+                const student = db.prepare('SELECT id, mentor_id FROM users WHERE id = ?').get(student_id);
+                if (!student || student.mentor_id !== req.user.id) {
                     return res.status(403).json({ success: false, message: 'Access denied for this student.' });
                 }
-                query.student = studentId;
-            } else {
-                query.student = { $in: assignedStudentIds };
+                filters.student_id = Number(student_id);
             }
+            entries = queries.getEntriesForMentor(req.user.id, filters);
         } else if (req.user.role === 'admin') {
-            if (studentId) query.student = studentId;
-            if (mentorId) query.mentor = mentorId;
+            if (student_id) filters.student_id = Number(student_id);
+            entries = queries.getAllEntries(filters);
         } else {
-            // Unknown role — deny access rather than leaking all entries.
             return res.status(403).json({ success: false, message: 'Access denied.' });
         }
 
-        // Filters
-        if (sentiment) query['aiAnalysis.sentiment'] = sentiment;
-        if (riskLevel) query['aiAnalysis.riskLevel'] = riskLevel;
-        if (status) query.status = status;
-        if (startDate || endDate) {
-            query.createdAt = {};
-            if (startDate) query.createdAt.$gte = new Date(startDate);
-            if (endDate) query.createdAt.$lte = new Date(endDate);
-        }
+        const total = queries.countEntries(req.user.role, req.user.id, filters);
 
-        // Text search
-        const safeSearch = buildSafeSearchRegex(search);
-        if (safeSearch) {
-            query.$or = [
-                { content: safeSearch },
-                { academicPerformance: safeSearch },
-                { challenges: safeSearch },
-                { goals: safeSearch },
-            ];
-        }
-
-        const allowedSortFields = new Set(['createdAt', 'startDate', 'endDate', 'status', 'aiAnalysis.riskScore', 'aiAnalysis.sentimentScore']);
-        const safeSortBy = allowedSortFields.has(sortBy) ? sortBy : 'createdAt';
-        const sort = { [safeSortBy]: sortOrder === 'asc' ? 1 : -1 };
-
-        const [entries, total] = await Promise.all([
-            DiaryEntry.find(query)
-                .sort(sort)
-                .skip(skip)
-                .limit(limit)
-                .populate('student', 'name email department batch rollNumber')
-                .populate('mentor', 'name email'),
-            DiaryEntry.countDocuments(query),
-        ]);
-
-        res.json({
+        return res.json({
             success: true,
-            data: entries,
+            data: entries.map(formatEntry),
             pagination: {
                 total,
                 page,
@@ -307,106 +268,142 @@ exports.getEntries = async (req, res, next) => {
     }
 };
 
-// GET /api/diary/:id - Get single entry
-exports.getEntry = async (req, res, next) => {
+// GET /api/diary/:id
+exports.getEntry = (req, res, next) => {
     try {
-        const entry = await DiaryEntry.findById(req.params.id)
-            .populate('student', 'name email department batch rollNumber')
-            .populate('mentor', 'name email department');
-
+        const entry = queries.getEntryById(req.params.id);
         if (!entry) return res.status(404).json({ success: false, message: 'Entry not found' });
 
-        const studentId = entry.student?._id || entry.student;
-        if (req.user.role === 'student' && !idsEqual(studentId, req.user._id)) {
+        if (req.user.role === 'student' && entry.student_id !== req.user.id) {
             return res.status(403).json({ success: false, message: 'Access denied.' });
         }
-
         if (req.user.role === 'mentor') {
-            const allowed = await canAccessStudentData(req.user, studentId);
-            if (!allowed) {
+            const student = db.prepare('SELECT mentor_id FROM users WHERE id = ?').get(entry.student_id);
+            if (!student || student.mentor_id !== req.user.id) {
                 return res.status(403).json({ success: false, message: 'Access denied.' });
             }
-        } else if (req.user.role !== 'admin') {
-            // Unknown role — deny rather than expose.
-            return res.status(403).json({ success: false, message: 'Access denied.' });
         }
 
-        res.json({ success: true, data: entry });
+        const subjectRatingRows = queries.getSubjectRatings(entry.id);
+        return res.json({
+            success: true,
+            data: { ...formatEntry(entry), subject_ratings: subjectRatingRows },
+        });
     } catch (error) {
         next(error);
     }
 };
 
-// PATCH /api/diary/:id/response - Mentor adds response
-exports.addMentorResponse = async (req, res, next) => {
+// PATCH /api/diary/:id
+exports.updateEntry = async (req, res, next) => {
+    try {
+        const entry = queries.getEntryById(req.params.id);
+        if (!entry) return res.status(404).json({ success: false, message: 'Entry not found' });
+
+        if (entry.student_id !== req.user.id) {
+            return res.status(403).json({ success: false, message: 'Access denied.' });
+        }
+
+        const { reflection, challenges, mood, weekly_difficulty, attendance_explanation, subjectRatings } = req.body;
+
+        const updates = {};
+        if (reflection !== undefined) updates.reflection = String(reflection).trim();
+        if (challenges !== undefined) updates.challenges = challenges;
+        if (mood !== undefined) updates.mood = Number(mood);
+        if (weekly_difficulty !== undefined) updates.weekly_difficulty = Number(weekly_difficulty);
+        if (attendance_explanation !== undefined) updates.attendance_explanation = attendance_explanation;
+
+        // Re-run AI if reflection changed
+        if (reflection) {
+            const fullText = [reflection, challenges || entry.challenges].filter(Boolean).join('\n\n');
+            const recentEntries = db.prepare(`
+                SELECT ai_risk_level FROM diary_entries
+                WHERE student_id = ? AND id != ? ORDER BY created_at DESC LIMIT 4
+            `).all(req.user.id, entry.id);
+            const consecutiveHighCount = recentEntries.filter(e => ['high', 'critical'].includes(e.ai_risk_level)).length;
+            const aiAnalysis = await analyzeEntry(fullText, req.user.id, {}, consecutiveHighCount);
+            updates.ai_risk_score = aiAnalysis.riskScore;
+            updates.ai_sentiment = aiAnalysis.sentiment;
+            updates.ai_risk_level = aiAnalysis.riskLevel;
+            updates.ai_flags = JSON.stringify(aiAnalysis.keywords || []);
+            updates.ai_summary = aiAnalysis.summary || null;
+            updates.ai_key_concerns = JSON.stringify(aiAnalysis.keyConcerns || []);
+            updates.is_flagged = aiAnalysis.flagged ? 1 : 0;
+        }
+
+        queries.updateEntry(entry.id, updates);
+
+        if (subjectRatings !== undefined) {
+            queries.deleteSubjectRatings(entry.id);
+            let parsedRatings = Array.isArray(subjectRatings) ? subjectRatings : JSON.parse(subjectRatings || '[]');
+            if (parsedRatings.length > 0) queries.createSubjectRatings(entry.id, parsedRatings);
+        }
+
+        const updated = queries.getEntryById(entry.id);
+        const subjectRatingRows = queries.getSubjectRatings(entry.id);
+        return res.json({
+            success: true,
+            data: { ...formatEntry(updated), subject_ratings: subjectRatingRows },
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// PATCH /api/diary/:id/response
+exports.addMentorResponse = (req, res, next) => {
     try {
         const { response } = req.body;
         if (!response || response.trim().length < 10) {
             return res.status(400).json({ success: false, message: 'Response must be at least 10 characters.' });
         }
 
-        const entry = await DiaryEntry.findById(req.params.id)
-            .populate('student', 'name email')
-            .populate('mentor', 'name email');
-
+        const entry = queries.getEntryById(req.params.id);
         if (!entry) return res.status(404).json({ success: false, message: 'Entry not found' });
 
         if (req.user.role === 'mentor') {
-            const studentId = entry.student?._id || entry.student;
-            const allowed = await canAccessStudentData(req.user, studentId);
-            if (!allowed) {
+            const student = db.prepare('SELECT mentor_id FROM users WHERE id = ?').get(entry.student_id);
+            if (!student || student.mentor_id !== req.user.id) {
                 return res.status(403).json({ success: false, message: 'You are not assigned to this student.' });
             }
         }
 
-        entry.mentorResponse = response;
-        entry.mentorRespondedAt = new Date();
-        entry.status = 'reviewed';
-        entry.mentor = req.user._id;
-        await entry.save();
+        queries.updateEntry(entry.id, {
+            mentor_response: response.trim(),
+            mentor_responded_at: new Date().toISOString(),
+            status: 'reviewed',
+        });
 
-        await entry.populate('student', 'name email department batch');
-        await entry.populate('mentor', 'name email');
+        notifyStudent(entry.student_id, {
+            _id: entry.id,
+            mentor: { name: req.user.name },
+        });
 
-        notifyStudent(entry.student._id, entry);
-
-        res.json({ success: true, message: 'Response added successfully', data: entry });
+        const updated = queries.getEntryById(entry.id);
+        return res.json({ success: true, message: 'Response added successfully', data: formatEntry(updated) });
     } catch (error) {
         next(error);
     }
 };
 
-// GET /api/diary/flagged - Get flagged/high-risk entries
-exports.getFlaggedEntries = async (req, res, next) => {
+// GET /api/diary/flagged
+exports.getFlaggedEntries = (req, res, next) => {
     try {
-        const query = { 'aiAnalysis.flagged': true };
         const { page, limit, skip } = getPagination(req.query);
+        const filters = { is_flagged: 1, limit, offset: skip };
+
+        let entries;
         if (req.user.role === 'mentor') {
-            const assignedStudentIds = await getAssignedStudentIds(req.user._id);
-            if (assignedStudentIds.length === 0) {
-                return res.json({
-                    success: true,
-                    data: [],
-                    count: 0,
-                    pagination: { total: 0, page, limit, pages: 0 },
-                });
-            }
-            query.student = { $in: assignedStudentIds };
+            entries = queries.getEntriesForMentor(req.user.id, filters);
+        } else {
+            entries = queries.getAllEntries(filters);
         }
 
-        const [entries, total] = await Promise.all([
-            DiaryEntry.find(query)
-                .sort({ 'aiAnalysis.riskScore': -1 })
-                .skip(skip)
-                .limit(limit)
-                .populate('student', 'name email department batch rollNumber')
-                .populate('mentor', 'name email'),
-            DiaryEntry.countDocuments(query),
-        ]);
+        const total = queries.countEntries(req.user.role, req.user.id, filters);
 
-        res.json({
+        return res.json({
             success: true,
-            data: entries,
+            data: entries.map(formatEntry),
             count: entries.length,
             pagination: { total, page, limit, pages: Math.ceil(total / limit) },
         });
@@ -415,38 +412,25 @@ exports.getFlaggedEntries = async (req, res, next) => {
     }
 };
 
-// GET /api/diary/priority-queue - Mentor/admin triage list
-exports.getPriorityQueue = async (req, res, next) => {
+// GET /api/diary/priority-queue
+exports.getPriorityQueue = (req, res, next) => {
     try {
-        const query = {};
         const { page, limit, skip } = getPagination(req.query);
+        const filters = { limit, offset: skip };
 
+        let entries;
         if (req.user.role === 'mentor') {
-            const assignedStudentIds = await getAssignedStudentIds(req.user._id);
-            if (assignedStudentIds.length === 0) {
-                return res.json({
-                    success: true,
-                    data: [],
-                    pagination: { total: 0, page, limit, pages: 0 },
-                });
-            }
-            query.student = { $in: assignedStudentIds };
+            entries = queries.getEntriesForMentor(req.user.id, filters);
+        } else {
+            entries = queries.getAllEntries(filters);
         }
 
-        const [entries, total] = await Promise.all([
-            DiaryEntry.find(query)
-                .populate('student', 'name email department batch rollNumber')
-                .sort({ createdAt: -1 })
-                .skip(skip)
-                .limit(limit)
-                .lean({ virtuals: true }),
-            DiaryEntry.countDocuments(query),
-        ]);
+        const total = queries.countEntries(req.user.role, req.user.id, filters);
 
-        const getPriorityRank = (entry) => {
-            if (entry.aiAnalysis?.riskLevel === 'critical') return 1;
-            if (entry.aiAnalysis?.riskLevel === 'high') return 2;
-            if (entry.status !== 'reviewed') return 3;
+        const getPriorityRank = (e) => {
+            if (e.ai_risk_level === 'critical') return 1;
+            if (e.ai_risk_level === 'high') return 2;
+            if (e.status !== 'reviewed') return 3;
             return 4;
         };
 
@@ -458,20 +442,13 @@ exports.getPriorityQueue = async (req, res, next) => {
         );
 
         const sorted = entries
-            .map((entry) => {
-                const priorityRank = getPriorityRank(entry);
-                return {
-                    ...entry,
-                    priorityRank,
-                    priorityLabel: getPriorityLabel(priorityRank),
-                };
-            })
+            .map(e => ({ ...formatEntry(e), priorityRank: getPriorityRank(e), priorityLabel: getPriorityLabel(getPriorityRank(e)) }))
             .sort((a, b) => {
                 if (a.priorityRank !== b.priorityRank) return a.priorityRank - b.priorityRank;
-                return new Date(b.createdAt) - new Date(a.createdAt);
+                return new Date(b.created_at) - new Date(a.created_at);
             });
 
-        res.json({
+        return res.json({
             success: true,
             data: sorted,
             pagination: { total, page, limit, pages: Math.ceil(total / limit) },
@@ -481,76 +458,52 @@ exports.getPriorityQueue = async (req, res, next) => {
     }
 };
 
-// GET /api/diary/student/:studentId/history - Risk history for charts
-exports.getStudentRiskHistory = async (req, res, next) => {
+// GET /api/diary/student/:studentId/history
+exports.getStudentRiskHistory = (req, res, next) => {
     try {
-        const allowed = await canAccessStudentData(req.user, req.params.studentId);
-        if (!allowed) {
-            return res.status(403).json({ success: false, message: 'Access denied.' });
+        const studentId = Number(req.params.studentId);
+        if (req.user.role === 'mentor') {
+            const student = db.prepare('SELECT mentor_id FROM users WHERE id = ?').get(studentId);
+            if (!student || student.mentor_id !== req.user.id) {
+                return res.status(403).json({ success: false, message: 'Access denied.' });
+            }
         }
 
-        const entries = await DiaryEntry.find({ student: req.params.studentId })
-            .select('startDate endDate week createdAt aiAnalysis.riskScore aiAnalysis.sentiment aiAnalysis.riskLevel aiAnalysis.riskFactors')
-            .sort({ createdAt: 1 })
-            .limit(16);
+        const entries = db.prepare(`
+            SELECT id, week_number, start_date, end_date, ai_risk_score, ai_sentiment, ai_risk_level, created_at
+            FROM diary_entries WHERE student_id = ? ORDER BY week_number ASC LIMIT 16
+        `).all(studentId);
 
-        res.json({ success: true, data: entries });
+        return res.json({ success: true, data: entries });
     } catch (error) {
         next(error);
     }
 };
 
-// GET /api/diary/:id/mentor-suggestion - AI mentor response draft
+// GET /api/diary/:id/mentor-suggestion
 exports.getMentorSuggestion = async (req, res, next) => {
     try {
-        const entry = await DiaryEntry.findById(req.params.id)
-            .populate('student', 'name email department batch rollNumber')
-            .populate('mentor', 'name email department');
-
+        const entry = queries.getEntryById(req.params.id);
         if (!entry) return res.status(404).json({ success: false, message: 'Entry not found' });
 
         if (req.user.role === 'mentor') {
-            const studentId = entry.student?._id || entry.student;
-            const allowed = await canAccessStudentData(req.user, studentId);
-            if (!allowed) {
+            const student = db.prepare('SELECT mentor_id FROM users WHERE id = ?').get(entry.student_id);
+            if (!student || student.mentor_id !== req.user.id) {
                 return res.status(403).json({ success: false, message: 'Access denied.' });
             }
         }
 
-        const existing = entry.aiAnalysis?.mentorSuggestion;
-        if (existing?.generatedAt) {
-            return res.json({
-                success: true,
-                data: {
-                    supportiveResponse: existing.supportiveResponse,
-                    suggestedGuidance: existing.suggestedGuidance || [],
-                    confidence: existing.confidence ?? 0.6,
-                    promptVersion: existing.promptVersion || 'v1',
-                    cached: true,
-                    generatedAt: existing.generatedAt,
-                },
-            });
-        }
-
-        const suggestion = await generateMentorSuggestion(entry);
-        entry.aiAnalysis = entry.aiAnalysis || {};
-        entry.aiAnalysis.mentorSuggestion = {
-            supportiveResponse: suggestion.supportiveResponse,
-            suggestedGuidance: suggestion.suggestedGuidance || [],
-            confidence: suggestion.confidence ?? 0.6,
-            promptVersion: suggestion.promptVersion || 'v1',
-            generatedAt: new Date(),
-        };
-        await entry.save();
-
-        return res.json({
-            success: true,
-            data: {
-                ...suggestion,
-                cached: false,
-                generatedAt: entry.aiAnalysis.mentorSuggestion.generatedAt,
+        const suggestion = await generateMentorSuggestion({
+            content: entry.reflection,
+            aiAnalysis: {
+                summary: entry.ai_summary,
+                sentiment: entry.ai_sentiment,
+                riskLevel: entry.ai_risk_level,
+                keyConcerns: safeJson(entry.ai_key_concerns, []),
             },
         });
+
+        return res.json({ success: true, data: { ...suggestion, cached: false } });
     } catch (error) {
         next(error);
     }

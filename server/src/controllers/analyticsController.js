@@ -1,13 +1,6 @@
-const DiaryEntry = require('../models/DiaryEntry');
-const User = require('../models/User');
-const mongoose = require('mongoose');
-const SkillProgress = require('../models/SkillProgress');
-const Event = require('../models/Event');
-const AcademicRecord = require('../models/AcademicRecord');
-const StudentWeeklyInsight = require('../models/StudentWeeklyInsight');
+const db = require('../database/db');
+const queries = require('../database/queries');
 const { generateWeeklyInsights } = require('../services/aiService');
-const { streamAnalyticsCSV, streamFlaggedEntriesCSV } = require('../services/exportService');
-const { canAccessStudentData } = require('../utils/accessControl');
 
 function currentAcademicYear() {
     const now = new Date();
@@ -18,511 +11,228 @@ function currentAcademicYear() {
 }
 
 // GET /api/analytics/overview
-exports.getOverview = async (req, res, next) => {
+exports.getOverview = (req, res, next) => {
     try {
-        const [
-            totalStudents, totalMentors, totalEntries,
-            flaggedEntries, pendingReviews, reviewedEntries
-        ] = await Promise.all([
-            User.countDocuments({ role: 'student', isActive: true }),
-            User.countDocuments({ role: 'mentor', isActive: true }),
-            DiaryEntry.countDocuments(),
-            DiaryEntry.countDocuments({ 'aiAnalysis.flagged': true }),
-            DiaryEntry.countDocuments({ status: 'submitted' }),
-            DiaryEntry.countDocuments({ status: 'reviewed' }),
-        ]);
+        const yr = req.query.academic_year || currentAcademicYear();
 
-        const sentimentAgg = await DiaryEntry.aggregate([
-            { $group: { _id: '$aiAnalysis.sentiment', count: { $sum: 1 } } }
-        ]);
+        const totalStudents = db.prepare("SELECT COUNT(*) as n FROM users WHERE role='student' AND is_active=1").get().n;
+        const totalMentors  = db.prepare("SELECT COUNT(*) as n FROM users WHERE role='mentor'  AND is_active=1").get().n;
+        const totalEntries  = db.prepare('SELECT COUNT(*) as n FROM diary_entries WHERE academic_year = ?').get(yr).n;
+        const flaggedEntries = db.prepare('SELECT COUNT(*) as n FROM diary_entries WHERE is_flagged=1 AND academic_year=?').get(yr).n;
+        const pendingReviews = db.prepare("SELECT COUNT(*) as n FROM diary_entries WHERE status='submitted' AND academic_year=?").get(yr).n;
+        const reviewedEntries = db.prepare("SELECT COUNT(*) as n FROM diary_entries WHERE status='reviewed' AND academic_year=?").get(yr).n;
 
-        const riskAgg = await DiaryEntry.aggregate([
-            { $group: { _id: '$aiAnalysis.riskLevel', count: { $sum: 1 } } }
-        ]);
+        const sentimentBreakdown = db.prepare(`
+            SELECT ai_sentiment as _id, COUNT(*) as count FROM diary_entries
+            WHERE academic_year = ? GROUP BY ai_sentiment
+        `).all(yr);
 
-        res.json({
+        const riskBreakdown = db.prepare(`
+            SELECT ai_risk_level as _id, COUNT(*) as count FROM diary_entries
+            WHERE academic_year = ? GROUP BY ai_risk_level
+        `).all(yr);
+
+        return res.json({
             success: true,
             data: {
                 totalStudents, totalMentors, totalEntries,
                 flaggedEntries, pendingReviews, reviewedEntries,
                 reviewRate: totalEntries > 0 ? Math.round((reviewedEntries / totalEntries) * 100) : 0,
-                sentimentBreakdown: sentimentAgg,
-                riskBreakdown: riskAgg,
-            }
+                sentimentBreakdown,
+                riskBreakdown,
+            },
         });
-    } catch (error) {
-        next(error);
-    }
+    } catch (error) { next(error); }
 };
 
 // GET /api/analytics/sentiment-distribution
-exports.getSentimentDistribution = async (req, res, next) => {
+exports.getSentimentDistribution = (req, res, next) => {
     try {
-        const data = await DiaryEntry.aggregate([
-            { $group: { _id: '$aiAnalysis.sentiment', count: { $sum: 1 } } },
-            { $sort: { count: -1 } }
-        ]);
-        res.json({ success: true, data });
+        const data = db.prepare(`
+            SELECT ai_sentiment as _id, COUNT(*) as count
+            FROM diary_entries GROUP BY ai_sentiment ORDER BY count DESC
+        `).all();
+        return res.json({ success: true, data });
     } catch (error) { next(error); }
 };
 
 // GET /api/analytics/risk-distribution
-exports.getRiskDistribution = async (req, res, next) => {
+exports.getRiskDistribution = (req, res, next) => {
     try {
-        const data = await DiaryEntry.aggregate([
-            { $group: { _id: '$aiAnalysis.riskLevel', count: { $sum: 1 }, avgScore: { $avg: '$aiAnalysis.riskScore' } } },
-            { $sort: { avgScore: -1 } }
-        ]);
-        res.json({ success: true, data });
+        const yr = req.query.academic_year || currentAcademicYear();
+        const data = db.prepare(`
+            SELECT
+                SUM(CASE WHEN ai_risk_score < 30 THEN 1 ELSE 0 END)              as low,
+                SUM(CASE WHEN ai_risk_score >= 30 AND ai_risk_score < 60 THEN 1 ELSE 0 END) as medium,
+                SUM(CASE WHEN ai_risk_score >= 60 AND ai_risk_score < 80 THEN 1 ELSE 0 END) as high,
+                SUM(CASE WHEN ai_risk_score >= 80 THEN 1 ELSE 0 END)             as critical
+            FROM diary_entries WHERE academic_year = ?
+        `).get(yr);
+        return res.json({ success: true, data });
     } catch (error) { next(error); }
 };
 
-// GET /api/analytics/entry-trends?period=weekly|monthly
-exports.getEntryTrends = async (req, res, next) => {
+// GET /api/analytics/entry-trends
+exports.getEntryTrends = (req, res, next) => {
     try {
-        const { period = 'weekly' } = req.query;
-        const dateFormat = period === 'monthly' ? '%Y-%m' : '%Y-W%V';
-        const groupFormat = period === 'monthly'
-            ? { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } }
-            : { year: { $year: '$createdAt' }, week: { $isoWeek: '$createdAt' } };
-
-        const data = await DiaryEntry.aggregate([
-            {
-                $group: {
-                    _id: groupFormat,
-                    count: { $sum: 1 },
-                    avgRisk: { $avg: '$aiAnalysis.riskScore' },
-                    flaggedCount: { $sum: { $cond: ['$aiAnalysis.flagged', 1, 0] } }
-                }
-            },
-            { $sort: { '_id.year': 1, '_id.month': 1, '_id.week': 1 } },
-            { $limit: 24 }
-        ]);
-
-        res.json({ success: true, data, period });
-    } catch (error) { next(error); }
-};
-
-// GET /api/analytics/intervention-response-time
-exports.getInterventionResponseTime = async (req, res, next) => {
-    try {
-        const data = await DiaryEntry.aggregate([
-            {
-                $match: {
-                    mentorRespondedAt: { $ne: null },
-                    mentor: { $ne: null }
-                }
-            },
-            {
-                $addFields: {
-                    responseTimeMs: {
-                        $subtract: ['$mentorRespondedAt', '$createdAt']
-                    }
-                }
-            },
-            {
-                $group: {
-                    _id: '$mentor',
-                    avgResponseHours: { $avg: { $divide: ['$responseTimeMs', 3600000] } },
-                    minResponseHours: { $min: { $divide: ['$responseTimeMs', 3600000] } },
-                    maxResponseHours: { $max: { $divide: ['$responseTimeMs', 3600000] } },
-                    responseCount: { $sum: 1 }
-                }
-            },
-            {
-                $lookup: {
-                    from: 'users',
-                    localField: '_id',
-                    foreignField: '_id',
-                    as: 'mentor'
-                }
-            },
-            { $unwind: '$mentor' },
-            {
-                $project: {
-                    mentorName: '$mentor.name',
-                    mentorEmail: '$mentor.email',
-                    avgResponseHours: { $round: ['$avgResponseHours', 1] },
-                    minResponseHours: { $round: ['$minResponseHours', 1] },
-                    maxResponseHours: { $round: ['$maxResponseHours', 1] },
-                    responseCount: 1
-                }
-            },
-            { $sort: { avgResponseHours: 1 } }
-        ]);
-
-        // Overall platform average
-        const overall = await DiaryEntry.aggregate([
-            { $match: { mentorRespondedAt: { $ne: null } } },
-            {
-                $group: {
-                    _id: null,
-                    avgHours: { $avg: { $divide: [{ $subtract: ['$mentorRespondedAt', '$createdAt'] }, 3600000] } }
-                }
-            }
-        ]);
-
-        res.json({
-            success: true,
-            data,
-            overallAvgHours: overall[0]?.avgHours ? Math.round(overall[0].avgHours * 10) / 10 : null
-        });
+        const data = db.prepare(`
+            SELECT week_number, COUNT(*) as count,
+                   AVG(ai_risk_score) as avg_risk,
+                   SUM(is_flagged) as flagged_count
+            FROM diary_entries
+            GROUP BY week_number
+            ORDER BY week_number ASC
+            LIMIT 24
+        `).all();
+        return res.json({ success: true, data, period: 'weekly' });
     } catch (error) { next(error); }
 };
 
 // GET /api/analytics/mentor-efficiency
-exports.getMentorEfficiency = async (req, res, next) => {
+exports.getMentorEfficiency = (req, res, next) => {
     try {
-        const data = await DiaryEntry.aggregate([
-            { $match: { mentor: { $ne: null } } },
-            {
-                $group: {
-                    _id: '$mentor',
-                    totalAssigned: { $sum: 1 },
-                    reviewed: { $sum: { $cond: [{ $eq: ['$status', 'reviewed'] }, 1, 0] } },
-                    flaggedHandled: { $sum: { $cond: [{ $and: ['$aiAnalysis.flagged', { $ne: ['$status', 'submitted'] }] }, 1, 0] } },
-                }
-            },
-            {
-                $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'mentor' }
-            },
-            { $unwind: '$mentor' },
-            {
-                $project: {
-                    mentorName: '$mentor.name',
-                    totalAssigned: 1,
-                    reviewed: 1,
-                    pendingCount: { $subtract: ['$totalAssigned', '$reviewed'] },
-                    reviewRate: { $round: [{ $multiply: [{ $divide: ['$reviewed', '$totalAssigned'] }, 100] }, 1] },
-                    flaggedHandled: 1
-                }
-            },
-            { $sort: { reviewRate: -1 } }
-        ]);
-        res.json({ success: true, data });
+        const data = db.prepare(`
+            SELECT
+                u.id as mentor_id,
+                u.name as mentor_name,
+                COUNT(DISTINCT s.id) as total_students,
+                COUNT(de.id) as total_entries,
+                SUM(CASE WHEN de.status='reviewed' THEN 1 ELSE 0 END) as reviewed,
+                ROUND(AVG(
+                    CASE WHEN de.mentor_responded_at IS NOT NULL
+                    THEN (julianday(de.mentor_responded_at) - julianday(de.created_at))
+                    ELSE NULL END
+                ), 2) as avg_response_days
+            FROM users u
+            LEFT JOIN users s ON s.mentor_id = u.id AND s.role='student'
+            LEFT JOIN diary_entries de ON de.student_id = s.id
+            WHERE u.role = 'mentor' AND u.is_active = 1
+            GROUP BY u.id
+            ORDER BY reviewed DESC
+        `).all();
+        return res.json({ success: true, data });
     } catch (error) { next(error); }
 };
 
-function addDays(date, days) {
-    const next = new Date(date);
-    next.setDate(next.getDate() + days);
-    return next;
-}
-
-function startOfDay(date = new Date()) {
-    const d = new Date(date);
-    d.setHours(0, 0, 0, 0);
-    return d;
-}
-
-function endOfDay(date = new Date()) {
-    const d = new Date(date);
-    d.setHours(23, 59, 59, 999);
-    return d;
-}
-
-function startOfIsoWeek(date = new Date()) {
-    const d = new Date(date);
-    const day = d.getDay() || 7;
-    d.setDate(d.getDate() - day + 1);
-    d.setHours(0, 0, 0, 0);
-    return d;
-}
-
-function endOfIsoWeek(date = new Date()) {
-    const start = startOfIsoWeek(date);
-    return endOfDay(addDays(start, 6));
-}
-
-async function resolveStudentScope(req) {
-    if (req.user.role === 'student') return req.user._id;
-
-    const studentId = req.query.studentId;
-    if (!studentId) return null;
-
-    if (req.user.role === 'admin') return studentId;
-
-    const allowed = await canAccessStudentData(req.user, studentId);
-    return allowed ? studentId : null;
-}
-
-// Compute ISO week number for a date
-function isoWeekNumber(date) {
-    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-    const day = d.getUTCDay() || 7;
-    d.setUTCDate(d.getUTCDate() + 4 - day);
-    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-    return { week: Math.ceil((((d - yearStart) / 86400000) + 1) / 7), year: d.getUTCFullYear() };
-}
-
-// Count consecutive submitted weeks (streak)
-function computeStreak(weekSet) {
-    let streak = 0;
-    const now = new Date();
-    const { week: curWeek, year: curYear } = isoWeekNumber(now);
-    let w = curWeek, y = curYear;
-    for (let i = 0; i < 52; i++) {
-        if (weekSet.has(`${y}-${w}`)) {
-            streak++;
-        } else if (i > 0) {
-            break; // gap — streak ends
-        }
-        // Also accept if current week has no entry yet (grace: start from last week)
-        w--;
-        if (w === 0) { y--; w = 52; }
-    }
-    return streak;
-}
-
-// GET /api/analytics/student-overview
-exports.getStudentOverview = async (req, res, next) => {
+// GET /api/analytics/student-risk-history
+exports.getStudentRiskHistory = (req, res, next) => {
     try {
-        const studentId = await resolveStudentScope(req);
-        if (!studentId) {
-            return res.status(400).json({ success: false, message: 'Valid studentId is required for mentor/admin access.' });
+        const { studentId, semester, academic_year } = req.query;
+        const resolvedStudentId = req.user.role === 'student' ? req.user.id : Number(studentId);
+
+        if (!resolvedStudentId) {
+            return res.status(400).json({ success: false, message: 'studentId is required.' });
         }
 
-        const now = new Date();
-        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        if (req.user.role === 'mentor') {
+            const s = db.prepare('SELECT mentor_id FROM users WHERE id = ?').get(resolvedStudentId);
+            if (!s || s.mentor_id !== req.user.id) {
+                return res.status(403).json({ success: false, message: 'Access denied.' });
+            }
+        }
 
-        const [entriesSubmitted, skillsAdded, eventsParticipated, latestEntry, entriesThisMonth] = await Promise.all([
-            DiaryEntry.countDocuments({ student: studentId }),
-            SkillProgress.countDocuments({ student: studentId }),
-            Event.countDocuments({ student: studentId }),
-            DiaryEntry.findOne({ student: studentId }).sort({ createdAt: -1 }).lean(),
-            DiaryEntry.countDocuments({ student: studentId, createdAt: { $gte: monthStart } }),
-        ]);
+        const yr = academic_year || currentAcademicYear();
+        const sem = semester ? Number(semester) : null;
 
-        const pendingMentorResponses = await DiaryEntry.countDocuments({
-            student: studentId,
-            status: 'submitted',
+        const data = queries.getRiskHistory(resolvedStudentId, sem, yr);
+        return res.json({ success: true, data });
+    } catch (error) { next(error); }
+};
+
+// GET /api/analytics/student-weekly-insight
+exports.getStudentWeeklyInsight = async (req, res, next) => {
+    try {
+        const { studentId, week_number, semester, academic_year } = req.query;
+        const resolvedStudentId = req.user.role === 'student' ? req.user.id : Number(studentId);
+        const yr = academic_year || currentAcademicYear();
+        const sem = Number(semester || req.user.current_semester || 4);
+        const weekNum = Number(week_number || 1);
+
+        if (!resolvedStudentId) {
+            return res.status(400).json({ success: false, message: 'studentId is required.' });
+        }
+
+        const existing = queries.getLatestInsight(resolvedStudentId, weekNum, yr, sem);
+        if (existing) {
+            return res.json({ success: true, data: { ...existing, cached: true } });
+        }
+
+        // Generate via AI
+        const entries = db.prepare(`
+            SELECT ai_risk_score, ai_sentiment, ai_risk_level, ai_summary, created_at
+            FROM diary_entries WHERE student_id = ? AND semester = ? AND academic_year = ?
+            ORDER BY week_number DESC LIMIT 6
+        `).all(resolvedStudentId, sem, yr).reverse();
+
+        const insights = await generateWeeklyInsights(entries.map(e => ({
+            createdAt: e.created_at,
+            aiAnalysis: {
+                sentiment: e.ai_sentiment,
+                riskLevel: e.ai_risk_level,
+                riskScore: e.ai_risk_score,
+                summary: e.ai_summary,
+            },
+        })));
+
+        queries.upsertInsight({
+            student_id: resolvedStudentId,
+            week_number: weekNum,
+            academic_year: yr,
+            semester: sem,
+            positive: insights.insightParagraph,
+            warning: insights.riskTrend,
+            suggestion: insights.engagementLevel,
         });
 
-        // Compute streak from weekly submission history
-        const weekBuckets = await DiaryEntry.aggregate([
-            { $match: { student: new mongoose.Types.ObjectId(studentId) } },
-            { $group: { _id: { year: { $isoWeekYear: '$createdAt' }, week: { $isoWeek: '$createdAt' } } } },
-        ]);
-        const weekSet = new Set(weekBuckets.map(b => `${b._id.year}-${b._id.week}`));
-        const streak = computeStreak(weekSet);
+        return res.json({ success: true, data: { ...insights, cached: false } });
+    } catch (error) { next(error); }
+};
 
-        // Last 7 ISO weeks for activity dots (true = submitted)
-        const { week: curWeek, year: curYear } = isoWeekNumber(now);
-        const weeklyActivity = [];
-        for (let i = 6; i >= 0; i--) {
-            let w = curWeek - i, y = curYear;
-            if (w <= 0) { y--; w += 52; }
-            weeklyActivity.push(weekSet.has(`${y}-${w}`));
+// GET /api/analytics/student-overview
+exports.getStudentOverview = (req, res, next) => {
+    try {
+        const resolvedStudentId = req.user.role === 'student' ? req.user.id : Number(req.query.studentId);
+        if (!resolvedStudentId) {
+            return res.status(400).json({ success: false, message: 'studentId required.' });
         }
 
-        const nextDiarySubmissionDeadline = latestEntry
-            ? addDays(latestEntry.endDate || latestEntry.createdAt, 7)
-            : addDays(new Date(), 7);
+        if (req.user.role === 'mentor') {
+            const s = db.prepare('SELECT mentor_id FROM users WHERE id = ?').get(resolvedStudentId);
+            if (!s || s.mentor_id !== req.user.id) {
+                return res.status(403).json({ success: false, message: 'Access denied.' });
+            }
+        }
 
-        const growthScore = Math.round((entriesSubmitted * 2) + (skillsAdded * 1.5) + (eventsParticipated * 1));
+        const entriesSubmitted = db.prepare('SELECT COUNT(*) as n FROM diary_entries WHERE student_id = ?').get(resolvedStudentId).n;
+        const achievementsCount = db.prepare('SELECT COUNT(*) as n FROM achievements WHERE student_id = ?').get(resolvedStudentId).n;
+        const pendingMentorResponses = db.prepare("SELECT COUNT(*) as n FROM diary_entries WHERE student_id = ? AND status='submitted'").get(resolvedStudentId).n;
+        const latestEntry = db.prepare('SELECT * FROM diary_entries WHERE student_id = ? ORDER BY created_at DESC LIMIT 1').get(resolvedStudentId);
+
+        const growthScore = Math.round(entriesSubmitted * 2 + achievementsCount * 1.5);
 
         return res.json({
             success: true,
             data: {
                 pendingMentorResponses,
-                latestSentimentResult: latestEntry?.aiAnalysis?.sentiment || null,
-                currentRiskScore: latestEntry?.aiAnalysis?.riskScore ?? null,
-                nextDiarySubmissionDeadline,
+                latestSentimentResult: latestEntry?.ai_sentiment || null,
+                currentRiskScore: latestEntry?.ai_risk_score ?? null,
                 entriesSubmitted,
-                entriesThisMonth,
-                streak,
-                weeklyActivity,
-                skillsAdded,
-                eventsParticipated,
+                achievementsCount,
                 growthScore,
             },
         });
-    } catch (error) {
-        next(error);
-    }
+    } catch (error) { next(error); }
 };
 
-// GET /api/analytics/student-growth
-exports.getStudentGrowth = async (req, res, next) => {
+// GET /api/analytics/portfolio
+exports.getPortfolio = (req, res, next) => {
     try {
-        const studentId = await resolveStudentScope(req);
-        if (!studentId) {
-            return res.status(400).json({ success: false, message: 'Valid studentId is required for mentor/admin access.' });
-        }
-        const scopedStudentId = new mongoose.Types.ObjectId(studentId);
-
-        const consistencyRaw = await DiaryEntry.aggregate([
-            { $match: { student: scopedStudentId } },
-            {
-                $group: {
-                    _id: {
-                        year: { $isoWeekYear: '$createdAt' },
-                        week: { $isoWeek: '$createdAt' },
-                    },
-                    submissions: { $sum: 1 },
-                },
-            },
-            { $sort: { '_id.year': -1, '_id.week': -1 } },
-            { $limit: 8 },
-            { $sort: { '_id.year': 1, '_id.week': 1 } },
-        ]);
-
-        const skillProgression = await SkillProgress.aggregate([
-            { $match: { student: scopedStudentId } },
-            {
-                $group: {
-                    _id: '$skillCategory',
-                    avgBefore: { $avg: '$ratingBefore' },
-                    avgAfter: { $avg: '$ratingAfter' },
-                    totalImprovement: { $sum: { $subtract: ['$ratingAfter', '$ratingBefore'] } },
-                    count: { $sum: 1 },
-                },
-            },
-            { $sort: { totalImprovement: -1 } },
-        ]);
-
-        const academicPerformance = await AcademicRecord.find({ student: studentId })
-            .sort({ createdAt: 1 })
-            .select('semester examType overallPercentage finalCgpa createdAt')
-            .lean();
-
-        return res.json({
-            success: true,
-            data: {
-                diarySubmissionConsistency: consistencyRaw.map((item) => ({
-                    label: `${item._id.year}-W${String(item._id.week).padStart(2, '0')}`,
-                    submissions: item.submissions,
-                })),
-                skillProgression: skillProgression.map((item) => ({
-                    category: item._id || 'Other',
-                    avgBefore: Math.round((item.avgBefore || 0) * 10) / 10,
-                    avgAfter: Math.round((item.avgAfter || 0) * 10) / 10,
-                    totalImprovement: Math.round((item.totalImprovement || 0) * 10) / 10,
-                    count: item.count,
-                })),
-                academicPerformanceTrend: academicPerformance.map((item) => ({
-                    label: `Sem ${item.semester} ${item.examType.toUpperCase()}`,
-                    overallPercentage: item.overallPercentage || 0,
-                    finalCgpa: item.finalCgpa || null,
-                    createdAt: item.createdAt,
-                })),
-            },
-        });
-    } catch (error) {
-        next(error);
-    }
-};
-
-// GET /api/analytics/student-weekly-insights
-exports.getStudentWeeklyInsights = async (req, res, next) => {
-    try {
-        const studentId = await resolveStudentScope(req);
-        if (!studentId) {
-            return res.status(400).json({ success: false, message: 'Valid studentId is required for mentor/admin access.' });
-        }
-
-        const weekStart = startOfIsoWeek();
-        const weekEnd = endOfIsoWeek();
-        const existing = await StudentWeeklyInsight.findOne({
-            student: studentId,
-            weekStart,
-            weekEnd,
-        }).sort({ generatedAt: -1 }).lean();
-        if (existing) {
-            return res.json({
-                success: true,
-                data: {
-                    sentimentTrend: existing.sentimentTrend,
-                    engagementLevel: existing.engagementLevel,
-                    riskTrend: existing.riskTrend,
-                    insightParagraph: existing.insightParagraph,
-                    confidence: existing.confidence,
-                    promptVersion: existing.promptVersion,
-                    generatedAt: existing.generatedAt,
-                    cached: true,
-                },
-            });
-        }
-
-        const todayStart = startOfDay();
-        const todayEnd = endOfDay();
-        const todaysGenerations = await StudentWeeklyInsight.countDocuments({
-            generatedBy: req.user._id,
-            generatedAt: { $gte: todayStart, $lte: todayEnd },
-        });
-        if (todaysGenerations >= 3) {
-            return res.status(429).json({
-                success: false,
-                message: 'Daily AI insight limit reached (3/day). Try again tomorrow.',
-            });
-        }
-
-        const entries = await DiaryEntry.find({ student: studentId })
-            .sort({ createdAt: -1 })
-            .limit(6)
-            .select('createdAt aiAnalysis')
-            .lean();
-
-        const insights = await generateWeeklyInsights(entries.reverse());
-        const saved = await StudentWeeklyInsight.create({
-            student: studentId,
-            generatedBy: req.user._id,
-            weekStart,
-            weekEnd,
-            sentimentTrend: insights.sentimentTrend,
-            engagementLevel: insights.engagementLevel,
-            riskTrend: insights.riskTrend,
-            insightParagraph: insights.insightParagraph,
-            confidence: insights.confidence ?? 0.6,
-            promptVersion: insights.promptVersion || 'v1',
-            generatedAt: new Date(),
-        });
-
-        return res.json({
-            success: true,
-            data: {
-                ...insights,
-                generatedAt: saved.generatedAt,
-                cached: false,
-            },
-        });
-    } catch (error) {
-        next(error);
-    }
-};
-
-// GET /api/analytics/student-weekly-insights/history
-exports.getStudentWeeklyInsightsHistory = async (req, res, next) => {
-    try {
-        const studentId = await resolveStudentScope(req);
-        if (!studentId) {
-            return res.status(400).json({ success: false, message: 'Valid studentId is required for mentor/admin access.' });
-        }
-
-        const history = await StudentWeeklyInsight.find({ student: studentId })
-            .sort({ generatedAt: -1 })
-            .limit(12)
-            .select('weekStart weekEnd sentimentTrend engagementLevel riskTrend insightParagraph confidence promptVersion generatedAt')
-            .lean();
-
-        return res.json({
-            success: true,
-            data: history,
-        });
-    } catch (error) {
-        next(error);
-    }
-};
-
-// GET /api/analytics/portfolio — student semester summary
-exports.getPortfolio = async (req, res, next) => {
-    try {
-        const studentId = req.user._id; // students only — enforced by requireRole
-
-        const entries = await DiaryEntry.find({ student: studentId })
-            .sort({ createdAt: 1 })
-            .select('week createdAt aiAnalysis subjectRatings emotionalRating mood mentorResponse status')
-            .lean();
+        const studentId = req.user.id;
+        const entries = db.prepare(`
+            SELECT id, week_number, mood, ai_risk_score, ai_sentiment, ai_risk_level,
+                   reflection, status, mentor_response, created_at
+            FROM diary_entries WHERE student_id = ? ORDER BY created_at ASC
+        `).all(studentId);
 
         if (entries.length === 0) {
             return res.json({
@@ -532,106 +242,61 @@ exports.getPortfolio = async (req, res, next) => {
                     riskTrend: [],
                     subjectPerformance: [],
                     recentEntries: [],
-                    aiSummary: 'No entries submitted yet. Start your journey by submitting your first diary entry!',
+                    aiSummary: 'No entries submitted yet.',
                 },
             });
         }
 
-        // ── Summary stats ───────────────────────────────────────────────────────
         const totalEntries = entries.length;
-        const scores = entries.map(e => e.aiAnalysis?.riskScore ?? 0).filter(s => s > 0);
+        const scores = entries.map(e => e.ai_risk_score ?? 0).filter(s => s > 0);
         const averageRiskScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
 
-        const now = new Date();
-        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-        const entriesThisMonth = entries.filter(e => new Date(e.createdAt) >= monthStart).length;
-
-        // Streak from weekly buckets
-        const weekSet = new Set(entries.map(e => {
-            const { week, year } = isoWeekNumber(new Date(e.createdAt));
-            return `${year}-${week}`;
-        }));
-        const currentStreak = computeStreak(weekSet);
-
-        // ── Risk trend (one point per entry) ──────────────────────────────────
+        const sentimentToScore = s => s === 'positive' ? 80 : s === 'negative' ? 20 : 50;
         const riskTrend = entries.map((e, idx) => ({
-            week: e.week || idx + 1,
-            weekLabel: `Wk ${e.week || idx + 1}`,
-            riskScore: e.aiAnalysis?.riskScore ?? 0,
-            sentimentScore: e.aiAnalysis?.sentimentScore ?? 50,
+            week: e.week_number || idx + 1,
+            weekLabel: `Wk ${e.week_number || idx + 1}`,
+            riskScore: e.ai_risk_score ?? 0,
+            sentimentScore: sentimentToScore(e.ai_sentiment),
         }));
 
-        // ── Subject performance ────────────────────────────────────────────────
-        const subjectMap = {};
-        for (const entry of entries) {
-            for (const sr of (entry.subjectRatings || [])) {
-                if (!sr.name) continue;
-                if (!subjectMap[sr.name]) subjectMap[sr.name] = { total: 0, count: 0 };
-                subjectMap[sr.name].total += Number(sr.rating) || 0;
-                subjectMap[sr.name].count++;
-            }
-        }
-        const subjectPerformance = Object.entries(subjectMap).map(([subject, { total, count }]) => ({
-            subject,
-            avgRating: Math.round((total / count) * 10) / 10,
-            entries: count,
-        })).sort((a, b) => b.avgRating - a.avgRating);
+        const subjectPerformance = queries.getSubjectPerformance(studentId, null, currentAcademicYear());
 
-        // ── AI summary (constructed from data, no AI call) ────────────────────
-        const firstScore = entries[0]?.aiAnalysis?.riskScore ?? 0;
-        const lastScore = entries[entries.length - 1]?.aiAnalysis?.riskScore ?? 0;
-        const trendDir = lastScore < firstScore ? 'improved' : lastScore > firstScore ? 'increased' : 'remained stable';
-        const topSubject = subjectPerformance[0]?.subject || 'your studies';
-        const dominantSentiment = (() => {
-            const counts = {};
-            entries.forEach(e => { const s = e.aiAnalysis?.sentiment; if (s) counts[s] = (counts[s] || 0) + 1; });
-            return Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'neutral';
-        })();
-
-        const aiSummary = `This semester you have submitted ${totalEntries} entr${totalEntries === 1 ? 'y' : 'ies'}, ` +
-            `maintaining a ${currentStreak}-week streak. Your risk score has ${trendDir} overall ` +
-            `(${firstScore} → ${lastScore}), reflecting ${dominantSentiment} sentiment across your entries. ` +
-            (topSubject !== 'your studies' ? `Your strongest subject is ${topSubject}. ` : '') +
-            `Keep up the consistent effort — your mentor is tracking your progress and is here to support you.`;
-
-        // ── Recent entries (last 6, full shape) ──────────────────────────────
         const recentEntries = entries.slice(-6).reverse().map(e => ({
-            _id: e._id,
-            week: e.week,
+            id: e.id,
+            week: e.week_number,
             mood: e.mood,
-            riskScore: e.aiAnalysis?.riskScore ?? 0,
-            riskLevel: e.aiAnalysis?.riskLevel ?? 'low',
-            reflection: e.content || e.reflection || '',
-            createdAt: e.createdAt,
-            reviewStatus: e.status || 'pending',
-            mentorComment: e.mentorResponse || null,
+            riskScore: e.ai_risk_score ?? 0,
+            riskLevel: e.ai_risk_level ?? 'low',
+            reflection: e.reflection || '',
+            createdAt: e.created_at,
+            reviewStatus: e.status || 'submitted',
+            mentorComment: e.mentor_response || null,
         }));
 
         return res.json({
             success: true,
             data: {
-                summary: { totalEntries, averageRiskScore, currentStreak, entriesThisMonth, academicYear: currentAcademicYear() },
+                summary: { totalEntries, averageRiskScore, currentStreak: 0, entriesThisMonth: 0, academicYear: currentAcademicYear() },
                 riskTrend,
                 subjectPerformance,
                 recentEntries,
-                aiSummary,
+                aiSummary: `You have submitted ${totalEntries} entries this semester.`,
             },
         });
-    } catch (error) {
-        next(error);
-    }
+    } catch (error) { next(error); }
 };
 
-// GET /api/analytics/export/csv
+// CSV export stubs (keep existing exportService pattern)
 exports.exportCSV = async (req, res, next) => {
     try {
+        const { streamAnalyticsCSV } = require('../services/exportService');
         await streamAnalyticsCSV(res, req.query.startDate, req.query.endDate);
     } catch (error) { next(error); }
 };
 
-// GET /api/analytics/export/flagged
 exports.exportFlaggedCSV = async (req, res, next) => {
     try {
+        const { streamFlaggedEntriesCSV } = require('../services/exportService');
         await streamFlaggedEntriesCSV(res);
     } catch (error) { next(error); }
 };

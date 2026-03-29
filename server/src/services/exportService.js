@@ -1,22 +1,5 @@
-const { Transform } = require('stream');
-const DiaryEntry = require('../models/DiaryEntry');
+const db = require('../database/db');
 
-// Column definitions
-const ANALYTICS_FIELDS = [
-    'Entry Date', 'Student Name', 'Student Email', 'Department', 'Batch',
-    'Week', 'Academic Year', 'Mood (1-5)', 'Sentiment', 'Sentiment Score',
-    'Risk Level', 'Risk Score', 'Flagged', 'Mentor', 'Status',
-    'Mentor Response Time (hours)', 'AI Summary',
-];
-
-const FLAGGED_FIELDS = [
-    'Entry Date', 'Student Name', 'Roll Number', 'Department', 'Email',
-    'Risk Level', 'Risk Score', 'Sentiment', 'Flagged Keywords',
-    'Assigned Mentor', 'Mentor Email', 'Mentor Responded',
-    'Response Time (hrs)', 'Status', 'AI Summary',
-];
-
-// Escape a CSV field value
 const escapeCSV = (val) => {
     const str = val == null ? '' : String(val);
     return str.includes(',') || str.includes('"') || str.includes('\n')
@@ -24,123 +7,90 @@ const escapeCSV = (val) => {
         : str;
 };
 
-// Build a header line from field names
 const csvHeader = (fields) => fields.map(escapeCSV).join(',') + '\n';
+const rowToCSV  = (row, fields) => fields.map(f => escapeCSV(row[f] ?? '')).join(',') + '\n';
 
-// Convert a row object to a CSV line
-const rowToCSV = (row, fields) =>
-    fields.map(f => escapeCSV(row[f] ?? '')).join(',') + '\n';
+const ANALYTICS_FIELDS = [
+    'Entry Date', 'Student Name', 'Student Email', 'Department', 'Section', 'Roll Number',
+    'Week', 'Academic Year', 'Mood (1-5)', 'Sentiment',
+    'Risk Level', 'Risk Score', 'Flagged', 'Status', 'AI Summary',
+];
 
-/**
- * Stream-based Analytics CSV export.
- * Pipes a Mongoose cursor through a Transform stream → response.
- * Avoids loading all entries into memory at once.
- */
+const FLAGGED_FIELDS = [
+    'Entry Date', 'Student Name', 'Roll Number', 'Department', 'Email',
+    'Risk Level', 'Risk Score', 'Sentiment', 'Status', 'AI Summary',
+];
+
 async function streamAnalyticsCSV(res, startDate, endDate) {
-    const query = {};
-    if (startDate || endDate) {
-        query.createdAt = {};
-        if (startDate) query.createdAt.$gte = new Date(startDate);
-        if (endDate) query.createdAt.$lte = new Date(endDate);
-    }
-
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="analytics.csv"');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.write(csvHeader(ANALYTICS_FIELDS));
 
-    const cursor = DiaryEntry.find(query)
-        .populate('student', 'name email department batch')
-        .populate('mentor', 'name email')
-        .lean()
-        .cursor();
+    let sql = `
+        SELECT de.*, u.name as student_name, u.email as student_email,
+               u.department, u.section, u.roll_number, u.batch
+        FROM diary_entries de
+        JOIN users u ON u.id = de.student_id
+        WHERE 1=1
+    `;
+    const params = [];
+    if (startDate) { sql += ' AND de.created_at >= ?'; params.push(startDate); }
+    if (endDate)   { sql += ' AND de.created_at <= ?'; params.push(endDate); }
 
-    const transform = new Transform({
-        objectMode: true,
-        transform(entry, _enc, cb) {
-            const row = {
-                'Entry Date': new Date(entry.createdAt).toLocaleDateString(),
-                'Student Name': entry.student?.name || 'N/A',
-                'Student Email': entry.student?.email || 'N/A',
-                'Department': entry.student?.department || 'N/A',
-                'Batch': entry.student?.batch || 'N/A',
-                'Week': entry.week,
-                'Academic Year': entry.academicYear,
-                'Mood (1-5)': entry.mood,
-                'Sentiment': entry.aiAnalysis?.sentiment || 'N/A',
-                'Sentiment Score': entry.aiAnalysis?.sentimentScore ?? 0,
-                'Risk Level': entry.aiAnalysis?.riskLevel || 'N/A',
-                'Risk Score': entry.aiAnalysis?.riskScore ?? 0,
-                'Flagged': entry.aiAnalysis?.flagged ? 'Yes' : 'No',
-                'Mentor': entry.mentor?.name || 'Unassigned',
-                'Status': entry.status,
-                'Mentor Response Time (hours)': entry.mentorRespondedAt
-                    ? Math.round((new Date(entry.mentorRespondedAt) - new Date(entry.createdAt)) / 360000) / 10
-                    : 'N/A',
-                'AI Summary': entry.aiAnalysis?.summary || '',
-            };
-            cb(null, rowToCSV(row, ANALYTICS_FIELDS));
-        },
-    });
-
-    cursor.pipe(transform).pipe(res);
-
-    await new Promise((resolve, reject) => {
-        res.on('finish', resolve);
-        res.on('error', reject);
-        cursor.on('error', reject);
-    });
+    const entries = db.prepare(sql).all(...params);
+    for (const entry of entries) {
+        res.write(rowToCSV({
+            'Entry Date':     new Date(entry.created_at).toLocaleDateString(),
+            'Student Name':   entry.student_name  || 'N/A',
+            'Student Email':  entry.student_email || 'N/A',
+            'Department':     entry.department    || 'N/A',
+            'Section':        entry.section       || 'N/A',
+            'Roll Number':    entry.roll_number   || 'N/A',
+            'Week':           entry.week_number,
+            'Academic Year':  entry.academic_year,
+            'Mood (1-5)':     entry.mood,
+            'Sentiment':      entry.ai_sentiment  || 'N/A',
+            'Risk Level':     entry.ai_risk_level || 'N/A',
+            'Risk Score':     entry.ai_risk_score ?? 0,
+            'Flagged':        entry.is_flagged ? 'Yes' : 'No',
+            'Status':         entry.status,
+            'AI Summary':     entry.ai_summary    || '',
+        }, ANALYTICS_FIELDS));
+    }
+    res.end();
 }
 
-/**
- * Stream-based Flagged Entries CSV export.
- */
 async function streamFlaggedEntriesCSV(res) {
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', 'attachment; filename="flagged-entries.csv"');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.write(csvHeader(FLAGGED_FIELDS));
 
-    const cursor = DiaryEntry.find({ 'aiAnalysis.flagged': true })
-        .sort({ 'aiAnalysis.riskScore': -1 })
-        .populate('student', 'name email department batch rollNumber')
-        .populate('mentor', 'name email')
-        .lean()
-        .cursor();
+    const entries = db.prepare(`
+        SELECT de.*, u.name as student_name, u.email as student_email,
+               u.department, u.roll_number
+        FROM diary_entries de
+        JOIN users u ON u.id = de.student_id
+        WHERE de.is_flagged = 1
+        ORDER BY de.ai_risk_score DESC
+    `).all();
 
-    const transform = new Transform({
-        objectMode: true,
-        transform(entry, _enc, cb) {
-            const row = {
-                'Entry Date': new Date(entry.createdAt).toLocaleDateString(),
-                'Student Name': entry.student?.name || 'N/A',
-                'Roll Number': entry.student?.rollNumber || 'N/A',
-                'Department': entry.student?.department || 'N/A',
-                'Email': entry.student?.email || 'N/A',
-                'Risk Level': (entry.aiAnalysis?.riskLevel || 'N/A').toUpperCase(),
-                'Risk Score': entry.aiAnalysis?.riskScore ?? 0,
-                'Sentiment': entry.aiAnalysis?.sentiment || 'N/A',
-                'Flagged Keywords': entry.aiAnalysis?.keywords?.map(k => k.word).join('; ') || '',
-                'Assigned Mentor': entry.mentor?.name || 'Unassigned',
-                'Mentor Email': entry.mentor?.email || 'N/A',
-                'Mentor Responded': entry.mentorRespondedAt ? 'Yes' : 'No',
-                'Response Time (hrs)': entry.mentorRespondedAt
-                    ? Math.round((new Date(entry.mentorRespondedAt) - new Date(entry.createdAt)) / 360000) / 10
-                    : 'N/A',
-                'Status': entry.status,
-                'AI Summary': entry.aiAnalysis?.summary || '',
-            };
-            cb(null, rowToCSV(row, FLAGGED_FIELDS));
-        },
-    });
-
-    cursor.pipe(transform).pipe(res);
-
-    await new Promise((resolve, reject) => {
-        res.on('finish', resolve);
-        res.on('error', reject);
-        cursor.on('error', reject);
-    });
+    for (const entry of entries) {
+        res.write(rowToCSV({
+            'Entry Date':   new Date(entry.created_at).toLocaleDateString(),
+            'Student Name': entry.student_name  || 'N/A',
+            'Roll Number':  entry.roll_number   || 'N/A',
+            'Department':   entry.department    || 'N/A',
+            'Email':        entry.student_email || 'N/A',
+            'Risk Level':   (entry.ai_risk_level || 'N/A').toUpperCase(),
+            'Risk Score':   entry.ai_risk_score ?? 0,
+            'Sentiment':    entry.ai_sentiment  || 'N/A',
+            'Status':       entry.status,
+            'AI Summary':   entry.ai_summary    || '',
+        }, FLAGGED_FIELDS));
+    }
+    res.end();
 }
 
 module.exports = { streamAnalyticsCSV, streamFlaggedEntriesCSV };
