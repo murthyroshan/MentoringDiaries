@@ -1,335 +1,421 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Video, Clock, CalendarDays, ChevronDown, ChevronUp, MapPin } from 'lucide-react'
-import { format, formatDistanceToNow, isPast, differenceInHours, differenceInMinutes } from 'date-fns'
+import { motion, AnimatePresence } from 'framer-motion'
+import { useAuthStore } from '../../store/authStore'
 import api from '../../services/api'
 
-function normalizeSession(s) {
-  const date = s.scheduledAt || s.date
-  return {
-    ...s,
-    date,
-    time: date ? new Date(date).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : '',
-    mentorName: s.mentor?.name || s.mentorName || 'Your Mentor',
-    type: s.type || '1:1 Mentoring Session',
-    duration: s.duration || '45 min',
-    mode: s.mode || 'Online',
-    notes: s.mentorNotes || s.notes,
-    actionItems: s.actionItems || [],
-  }
+// ─── Design tokens ─────────────────────────────────────────────────────────────
+const C = {
+  border:  'rgba(255,255,255,0.06)',
+  text:    '#F2F0E8',
+  muted:   'rgba(242,240,232,0.45)',
+  subtle:  'rgba(242,240,232,0.18)',
+  green:   '#3DD68C',
+  amber:   '#F59E0B',
+  red:     '#EF4444',
+  teal:    '#2DD4BF',
+  purple:  '#A78BFA',
 }
 
-function Countdown({ date }) {
-  const hours = differenceInHours(new Date(date), new Date())
-  const minutes = differenceInMinutes(new Date(date), new Date()) % 60
-  if (hours > 24) return null
+const glass = {
+  background: 'rgba(17,17,24,0.75)',
+  backdropFilter: 'blur(20px)',
+  WebkitBackdropFilter: 'blur(20px)',
+  border: `1px solid ${C.border}`,
+  borderRadius: '16px',
+  padding: '20px',
+}
+
+function currentAcademicYear() {
+  const now = new Date()
+  const y = now.getFullYear()
+  return now.getMonth() >= 5 ? `${y}-${String(y + 1).slice(2)}` : `${y - 1}-${String(y).slice(2)}`
+}
+
+function getInitials(name = '') {
+  const parts = name.trim().split(/\s+/)
+  return parts.length >= 2
+    ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+    : (parts[0]?.[0] || '?').toUpperCase()
+}
+
+function formatDate(str) {
+  if (!str) return ''
+  return new Date(str).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+}
+
+function formatTime(str) {
+  if (!str) return ''
+  return new Date(str).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+}
+
+function formatShortDate(str) {
+  if (!str) return ''
+  return new Date(str).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+function getCountdown(scheduledAt) {
+  const now = Date.now()
+  const then = new Date(scheduledAt).getTime()
+  const diffMs = then - now
+  if (diffMs <= 0) return null
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
+  if (diffDays === 0) return `Today at ${formatTime(scheduledAt)}`
+  if (diffDays === 1) return 'Tomorrow'
+  return `in ${diffDays} day${diffDays !== 1 ? 's' : ''}`
+}
+
+function buildICS(session) {
+  const mentor = session.mentor?.name || 'Mentor'
+  const start = new Date(session.scheduled_at)
+  const end = new Date(start.getTime() + (session.duration_mins || 60) * 60 * 1000)
+
+  function pad(n) { return String(n).padStart(2, '0') }
+  function toICSDate(d) {
+    return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`
+  }
+
+  const lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//MentoringDiaries//EN',
+    'BEGIN:VEVENT',
+    `DTSTART:${toICSDate(start)}`,
+    `DTEND:${toICSDate(end)}`,
+    `SUMMARY:Mentoring Session with ${mentor}`,
+    `LOCATION:${session.location || 'TBD'}`,
+    `DESCRIPTION:Mentoring session scheduled via MentoringDiaries`,
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ]
+
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/calendar' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `mentoring-session-${start.toISOString().slice(0, 10)}.ics`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+const Skel = ({ h = 16, w = '100%', r = 8 }) => (
+  <div style={{ height: h, width: w, borderRadius: r, background: 'rgba(255,255,255,0.05)', animation: 'ssPulse 1.5s ease-in-out infinite' }} />
+)
+
+// ─── Upcoming Session Card ────────────────────────────────────────────────────
+function UpcomingSession({ session }) {
+  const countdown = getCountdown(session.scheduled_at)
+  const mentorName = session.mentor?.name || 'Your Mentor'
+  const mentorInitials = getInitials(mentorName)
+
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px',
-      padding: '8px 14px', borderRadius: '10px', background: 'rgba(232,184,75,0.08)',
-      border: '1px solid rgba(232,184,75,0.15)', width: 'fit-content',
-    }}>
-      <div style={{
-        width: '6px', height: '6px', borderRadius: '50%', background: '#E8B84B',
-        animation: 'live-pulse 1.5s ease-in-out infinite',
-      }} />
-      <span style={{ fontSize: '12px', color: '#E8B84B', fontWeight: 500 }}>
-        Starting in {hours}h {minutes}m
-      </span>
-      <style>{`@keyframes live-pulse{0%,100%{opacity:0.5;transform:scale(1)}50%{opacity:1;transform:scale(1.5)}}`}</style>
+    <div style={{ ...glass, borderLeft: `2px solid ${C.teal}` }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+        <div>
+          <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 10px', borderRadius: '999px', background: `${C.teal}22`, border: `1px solid ${C.teal}55`, color: C.teal, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Upcoming session</span>
+        </div>
+        {countdown && (
+          <span style={{ fontSize: '13px', fontWeight: 600, color: C.teal }}>{countdown}</span>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+        {/* Avatar */}
+        <div style={{ width: 48, height: 48, borderRadius: '50%', background: `linear-gradient(135deg, ${C.purple}66, ${C.teal}44)`, border: `2px solid ${C.purple}55`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+          {mentorInitials}
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: '16px', fontWeight: 700, color: C.text }}>{mentorName}</div>
+          {session.mentor?.department && <div style={{ fontSize: '12px', color: C.muted }}>{session.mentor.department}</div>}
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '10px', marginTop: '16px' }}>
+        <div style={{ padding: '10px 14px', borderRadius: '10px', background: 'rgba(255,255,255,0.04)', border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: '11px', color: C.muted, marginBottom: '4px' }}>Date</div>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: C.text }}>{formatDate(session.scheduled_at)}</div>
+        </div>
+        <div style={{ padding: '10px 14px', borderRadius: '10px', background: 'rgba(255,255,255,0.04)', border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: '11px', color: C.muted, marginBottom: '4px' }}>Time</div>
+          <div style={{ fontSize: '13px', fontWeight: 600, color: C.text }}>{formatTime(session.scheduled_at)}</div>
+        </div>
+        {session.duration_mins && (
+          <div style={{ padding: '10px 14px', borderRadius: '10px', background: 'rgba(255,255,255,0.04)', border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: '11px', color: C.muted, marginBottom: '4px' }}>Duration</div>
+            <div style={{ fontSize: '13px', fontWeight: 600, color: C.text }}>{session.duration_mins} minutes</div>
+          </div>
+        )}
+        {session.location && (
+          <div style={{ padding: '10px 14px', borderRadius: '10px', background: 'rgba(255,255,255,0.04)', border: `1px solid ${C.border}` }}>
+            <div style={{ fontSize: '11px', color: C.muted, marginBottom: '4px' }}>Location</div>
+            <div style={{ fontSize: '13px', fontWeight: 600, color: C.text }}>{session.location}</div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginTop: '16px' }}>
+        <button onClick={() => buildICS(session)}
+          style={{ padding: '8px 18px', borderRadius: '10px', background: 'rgba(45,212,191,0.12)', border: `1px solid ${C.teal}44`, color: C.teal, cursor: 'pointer', fontSize: '13px', fontFamily: 'inherit', fontWeight: 600 }}>
+          📅 Add to calendar
+        </button>
+      </div>
     </div>
   )
 }
 
-function UpcomingSessionCard({ session }) {
-  const sessionDate = new Date(session.date || session.scheduledAt)
-  const isWithin24h = differenceInHours(sessionDate, new Date()) <= 24
+// ─── Timeline Node ────────────────────────────────────────────────────────────
+function TimelineNode({ session, index }) {
+  const [notesExpanded, setNotesExpanded] = useState(false)
+  const statusColor = session.status === 'completed' ? C.teal : C.red
+  const actionItems = useMemo(() => {
+    try { return JSON.parse(session.action_items || '[]') } catch { return [] }
+  }, [session.action_items])
+
+  const notesLong = (session.notes || '').length > 200
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 12 }}
+      initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: [0.25, 0.1, 0.25, 1] }}
-      style={{
-        background: 'linear-gradient(135deg,#111118 0%,#16161F 100%)',
-        border: '1px solid rgba(232,184,75,0.1)',
-        borderRadius: '24px', padding: '28px',
-        display: 'flex', gap: '24px', alignItems: 'flex-start',
-        marginBottom: '16px',
-      }}
+      transition={{ delay: index * 0.1, duration: 0.35 }}
+      style={{ display: 'flex', gap: '16px', alignItems: 'flex-start' }}
     >
-      {/* Date block */}
-      <div style={{
-        flexShrink: 0, textAlign: 'center', minWidth: '70px',
-        background: 'rgba(232,184,75,0.06)', border: '1px solid rgba(232,184,75,0.12)',
-        borderRadius: '16px', padding: '14px 18px',
-      }}>
-        <div style={{
-          fontSize: '10px', color: '#E8B84B', fontWeight: 600,
-          letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '4px',
-        }}>
-          {format(sessionDate, 'MMM')}
-        </div>
-        <div style={{ fontSize: '36px', fontWeight: 900, color: '#F2F0E8', lineHeight: 1 }}>
-          {format(sessionDate, 'd')}
-        </div>
-        <div style={{ fontSize: '10px', color: 'rgba(242,240,232,0.35)', marginTop: '4px' }}>
-          {format(sessionDate, 'EEE')}
-        </div>
+      {/* Timeline dot + line */}
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0 }}>
+        <div style={{ width: 12, height: 12, borderRadius: '50%', background: statusColor, border: `2px solid ${statusColor}44`, flexShrink: 0, marginTop: '16px' }} />
+        <div style={{ width: 2, flex: 1, background: `linear-gradient(to bottom, ${statusColor}44, transparent)`, minHeight: '40px' }} />
       </div>
 
-      {/* Session details */}
-      <div style={{ flex: 1 }}>
-        <div style={{ fontSize: '18px', fontWeight: 600, color: '#F2F0E8', marginBottom: '10px' }}>
-          {session.type}
-        </div>
-
-        {/* Mentor */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
-          <div style={{
-            width: '32px', height: '32px', borderRadius: '50%',
-            background: 'rgba(232,184,75,0.15)', border: '1.5px solid rgba(232,184,75,0.3)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: '11px', fontWeight: 600, color: '#E8B84B',
-          }}>
-            {session.mentorInitials || session.mentorName?.split(' ').map(w => w[0]).join('').slice(0, 2)}
+      {/* Card */}
+      <div style={{ ...glass, flex: 1, marginBottom: '8px' }}>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginBottom: '10px' }}>
+          <div>
+            <div style={{ fontSize: '14px', fontWeight: 600, color: C.text }}>{formatDate(session.scheduled_at)}</div>
+            <div style={{ fontSize: '12px', color: C.muted, marginTop: '2px' }}>{formatTime(session.scheduled_at)}</div>
           </div>
-          <span style={{ fontSize: '13px', color: 'rgba(242,240,232,0.6)' }}>{session.mentorName}</span>
-          <span style={{ fontSize: '11px', color: 'rgba(242,240,232,0.3)', marginLeft: '4px' }}>your mentor</span>
-        </div>
-
-        {/* Meta */}
-        <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: 'rgba(242,240,232,0.4)' }}>
-            <Clock size={12} /> {session.time} · {session.duration}
-          </span>
-          <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: 'rgba(242,240,232,0.4)' }}>
-            <Video size={12} /> {session.mode || 'Online'}
-          </span>
-        </div>
-
-        {/* Agenda */}
-        {session.agenda && (
-          <div style={{
-            marginTop: '12px', padding: '10px 14px', background: 'rgba(255,255,255,0.02)',
-            border: '1px solid rgba(255,255,255,0.05)', borderRadius: '10px',
-          }}>
-            <div style={{
-              fontSize: '10px', color: 'rgba(242,240,232,0.3)', marginBottom: '4px',
-              fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.04em',
-            }}>Agenda</div>
-            <p style={{ fontSize: '12px', color: 'rgba(242,240,232,0.55)', margin: 0, lineHeight: 1.5 }}>
-              {session.agenda}
-            </p>
-          </div>
-        )}
-
-        {isWithin24h && <Countdown date={session.date} />}
-      </div>
-
-      {/* Action buttons */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0 }}>
-        <button style={{
-          padding: '10px 20px', borderRadius: '12px', fontSize: '13px',
-          background: 'linear-gradient(135deg,#E8B84B,#F5D380)', color: '#06060A',
-          fontWeight: 700, border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-          whiteSpace: 'nowrap',
-        }}>Join session</button>
-        <button style={{
-          padding: '10px 20px', borderRadius: '12px', fontSize: '13px',
-          background: 'transparent', color: 'rgba(242,240,232,0.5)',
-          border: '1px solid rgba(255,255,255,0.08)', cursor: 'pointer', fontFamily: 'inherit',
-          whiteSpace: 'nowrap',
-        }}>Reschedule</button>
-      </div>
-    </motion.div>
-  )
-}
-
-function PastSessionRow({ session, isExpanded, onToggle }) {
-  return (
-    <motion.div layout style={{ marginBottom: '8px' }}>
-      {/* Row header (always visible) */}
-      <div
-        onClick={onToggle}
-        style={{
-          display: 'flex', alignItems: 'center', gap: '16px',
-          background: '#111118', border: '1px solid rgba(255,255,255,0.06)',
-          borderRadius: isExpanded ? '16px 16px 0 0' : '16px',
-          padding: '14px 18px', cursor: 'pointer',
-          transition: 'border-color 0.2s, border-radius 0.2s',
-        }}
-      >
-        {/* Date */}
-        <div style={{ flexShrink: 0, width: '60px' }}>
-          <div style={{ fontSize: '13px', fontWeight: 600, color: '#F2F0E8' }}>
-            {format(new Date(session.date), 'MMM d')}
-          </div>
-          <div style={{ fontSize: '10px', color: 'rgba(242,240,232,0.3)' }}>
-            {format(new Date(session.date), 'yyyy')}
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {session.duration_mins && (
+              <span style={{ fontSize: '11px', padding: '3px 10px', borderRadius: '999px', background: 'rgba(255,255,255,0.06)', border: `1px solid ${C.border}`, color: C.muted }}>
+                {session.duration_mins} min
+              </span>
+            )}
+            {session.location && (
+              <span style={{ fontSize: '11px', padding: '3px 10px', borderRadius: '999px', background: 'rgba(255,255,255,0.06)', border: `1px solid ${C.border}`, color: C.muted }}>
+                📍 {session.location}
+              </span>
+            )}
+            <span style={{ fontSize: '11px', fontWeight: 600, padding: '3px 10px', borderRadius: '999px', background: `${statusColor}22`, border: `1px solid ${statusColor}55`, color: statusColor }}>
+              {session.status === 'completed' ? 'Completed' : 'Cancelled'}
+            </span>
           </div>
         </div>
 
-        {/* Details */}
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: '13px', color: 'rgba(242,240,232,0.7)' }}>{session.type}</div>
-          <div style={{ fontSize: '11px', color: 'rgba(242,240,232,0.35)', marginTop: '2px' }}>
-            {session.mentorName} · {session.duration}
-          </div>
-        </div>
-
-        {/* Expand button */}
-        <div style={{ color: 'rgba(242,240,232,0.3)' }}>
-          {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-        </div>
-      </div>
-
-      {/* Expanded content */}
-      <AnimatePresence>
-        {isExpanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.25 }}
-            style={{ overflow: 'hidden' }}
-          >
-            <div style={{
-              background: 'rgba(17,17,24,0.7)', border: '1px solid rgba(255,255,255,0.06)',
-              borderTop: 'none', borderRadius: '0 0 16px 16px', padding: '16px 18px',
-            }}>
-              {/* Notes */}
-              {session.notes && (
-                <div style={{ marginBottom: '14px' }}>
-                  <div style={{
-                    fontSize: '11px', color: 'rgba(242,240,232,0.3)', marginBottom: '6px',
-                    fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.04em',
-                  }}>Session Notes</div>
-                  <p style={{ fontSize: '13px', color: 'rgba(242,240,232,0.6)', margin: 0, lineHeight: 1.6 }}>
-                    {session.notes}
-                  </p>
-                </div>
-              )}
-
-              {/* Action items */}
-              {session.actionItems?.length > 0 && (
-                <div>
-                  <div style={{
-                    fontSize: '11px', color: 'rgba(242,240,232,0.3)', marginBottom: '8px',
-                    fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.04em',
-                  }}>Action Items</div>
-                  {session.actionItems.map((item, i) => (
-                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-                      <div style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#E8B84B', flexShrink: 0 }} />
-                      <span style={{ fontSize: '12px', color: 'rgba(242,240,232,0.55)' }}>{item}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+        {/* Notes */}
+        {session.notes && (
+          <div style={{ marginBottom: '10px' }}>
+            <div style={{ fontSize: '11px', fontWeight: 600, color: C.muted, marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Session notes</div>
+            <div style={{ fontSize: '13px', color: C.text, lineHeight: 1.6 }}>
+              {notesLong && !notesExpanded ? `${session.notes.slice(0, 200)}...` : session.notes}
             </div>
-          </motion.div>
+            {notesLong && (
+              <button onClick={() => setNotesExpanded(v => !v)} style={{ background: 'transparent', border: 'none', color: C.purple, cursor: 'pointer', fontSize: '12px', padding: '4px 0', fontFamily: 'inherit' }}>
+                {notesExpanded ? 'Show less' : 'Show more'}
+              </button>
+            )}
+          </div>
         )}
-      </AnimatePresence>
+
+        {/* Action items */}
+        {actionItems.length > 0 && (
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: 600, color: C.muted, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Agreed action items</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {actionItems.map((item, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '8px 12px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}` }}>
+                  <div style={{ width: 16, height: 16, borderRadius: '4px', border: `2px solid ${C.teal}66`, background: `${C.teal}22`, flexShrink: 0, marginTop: '1px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ width: 6, height: 6, borderRadius: '2px', background: C.teal }} />
+                  </div>
+                  <span style={{ fontSize: '13px', color: C.text }}>{typeof item === 'string' ? item : item.text || item.item || JSON.stringify(item)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </motion.div>
   )
 }
 
+// ─── Main ─────────────────────────────────────────────────────────────────────
 export default function StudentSessions() {
-  const reduced = useReducedMotion()
-  const [expandedPastId, setExpandedPastId] = useState(null)
+  const { user } = useAuthStore()
+  const academicYear = currentAcademicYear()
 
-  const { data: sessionsData, isLoading } = useQuery({
-    queryKey: ['student-sessions'],
-    queryFn: () => api.get('/sessions').then(r => r.data),
+  const { data: sessionsData, isLoading, error, refetch } = useQuery({
+    queryKey: ['sessions', 'student'],
+    queryFn: () => api.get('/sessions', { params: { limit: 100 } }).then(r => r.data),
+    staleTime: 5 * 60 * 1000,
+    retry: 1,
   })
 
-  const allSessions = (
-    sessionsData?.data || sessionsData?.sessions || sessionsData?.upcoming
-      ? [...(sessionsData?.upcoming || []), ...(sessionsData?.past || [])]
-      : Array.isArray(sessionsData)
-      ? sessionsData
-      : []
-  ).map(normalizeSession)
+  const allSessions = useMemo(() => sessionsData?.data || [], [sessionsData])
 
-  const rawAll = sessionsData?.data || sessionsData?.sessions
-  const normalizedAll = Array.isArray(rawAll)
-    ? rawAll.map(normalizeSession)
-    : allSessions
+  const now = Date.now()
 
-  const upcoming = sessionsData?.upcoming
-    ? sessionsData.upcoming.map(normalizeSession)
-    : normalizedAll.filter(s => s.date && !isPast(new Date(s.date)))
+  const upcoming = useMemo(() =>
+    allSessions
+      .filter(s => s.status === 'scheduled' && new Date(s.scheduled_at).getTime() > now)
+      .sort((a, b) => new Date(a.scheduled_at) - new Date(b.scheduled_at))
+  , [allSessions, now])
 
-  const past = sessionsData?.past
-    ? sessionsData.past.map(normalizeSession)
-    : normalizedAll.filter(s => s.date && isPast(new Date(s.date)))
+  const past = useMemo(() =>
+    allSessions
+      .filter(s => s.status === 'completed' || s.status === 'cancelled' || new Date(s.scheduled_at).getTime() <= now)
+      .sort((a, b) => new Date(b.scheduled_at) - new Date(a.scheduled_at))
+  , [allSessions, now])
+
+  // Stats
+  const totalThisSem = useMemo(() => {
+    const semStart = user?.current_semester % 2 === 1
+      ? new Date(new Date().getFullYear(), 5, 1)   // June
+      : new Date(new Date().getFullYear(), 0, 1)    // Jan
+    return allSessions.filter(s => new Date(s.scheduled_at) >= semStart).length
+  }, [allSessions, user])
+
+  const completedSessions = useMemo(() => past.filter(s => s.status === 'completed'), [past])
+
+  const avgDuration = useMemo(() => {
+    const withDuration = completedSessions.filter(s => s.duration_mins)
+    if (!withDuration.length) return null
+    return Math.round(withDuration.reduce((sum, s) => sum + s.duration_mins, 0) / withDuration.length)
+  }, [completedSessions])
+
+  const daysSinceLast = useMemo(() => {
+    if (!completedSessions.length) return null
+    const last = completedSessions[0]
+    return Math.floor((now - new Date(last.scheduled_at).getTime()) / (1000 * 60 * 60 * 24))
+  }, [completedSessions, now])
+
+  // All action items from past sessions
+  const allActionItems = useMemo(() => {
+    const items = []
+    past.forEach(s => {
+      try {
+        const parsed = JSON.parse(s.action_items || '[]')
+        parsed.forEach(item => items.push({ item, sessionDate: s.scheduled_at }))
+      } catch {}
+    })
+    return items
+  }, [past])
+
+  if (isLoading) {
+    return (
+      <>
+        <style>{`@keyframes ssPulse { 0%,100%{opacity:0.4} 50%{opacity:0.8} }`}</style>
+        <div style={{ maxWidth: '860px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <Skel h={32} w="180px" />
+          <div style={glass}><Skel h={160} /></div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '12px' }}>
+            {[1,2,3].map(i => <div key={i} style={glass}><Skel h={60} /></div>)}
+          </div>
+          {[1,2,3].map(i => <div key={i} style={glass}><Skel h={100} /></div>)}
+        </div>
+      </>
+    )
+  }
+
+  if (error) {
+    return (
+      <>
+        <style>{`@keyframes ssPulse { 0%,100%{opacity:0.4} 50%{opacity:0.8} }`}</style>
+        <div style={{ ...glass, border: '1px solid rgba(239,68,68,0.25)', textAlign: 'center', padding: '32px' }}>
+          <div style={{ fontSize: '13px', color: C.muted, marginBottom: '12px' }}>Failed to load sessions</div>
+          <button onClick={() => refetch()} style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: '8px', padding: '7px 18px', color: C.red, cursor: 'pointer', fontSize: '13px', fontFamily: 'inherit' }}>Retry</button>
+        </div>
+      </>
+    )
+  }
 
   return (
-    <motion.div
-      initial={reduced ? {} : { opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={reduced ? {} : { opacity: 0 }}
-      transition={{ duration: 0.35, ease: [0.25, 0.1, 0.25, 1] }}
-    >
-      {/* Page header */}
-      <div style={{ marginBottom: '28px' }}>
-        <h1 style={{
-          fontFamily: '"Sora",system-ui', fontSize: '24px', fontWeight: 700,
-          color: '#F2F0E8', margin: 0,
-        }}>Sessions</h1>
-        <p style={{ fontSize: '13px', color: 'rgba(242,240,232,0.4)', margin: '6px 0 0' }}>
-          Your mentoring sessions
-        </p>
-      </div>
+    <>
+      <style>{`@keyframes ssPulse { 0%,100%{opacity:0.4} 50%{opacity:0.8} }`}</style>
+      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} style={{ maxWidth: '860px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
 
-      {/* Upcoming */}
-      <div style={{ marginBottom: '40px' }}>
-        <div style={{
-          fontSize: '16px', fontWeight: 600, color: 'rgba(242,240,232,0.7)',
-          marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px',
-        }}>
-          Upcoming Sessions
-          {upcoming.length > 0 && (
-            <span style={{
-              fontSize: '12px', padding: '1px 8px', borderRadius: '999px',
-              background: 'rgba(232,184,75,0.1)', color: '#E8B84B',
-              border: '1px solid rgba(232,184,75,0.2)',
-            }}>{upcoming.length}</span>
+        {/* Header */}
+        <div>
+          <h1 style={{ fontSize: '24px', fontWeight: 700, color: C.text, margin: 0 }}>Sessions</h1>
+          <p style={{ fontSize: '13px', color: C.muted, margin: '6px 0 0' }}>Your mentoring sessions with {user?.name?.split(' ')[0] || 'your mentor'}</p>
+        </div>
+
+        {/* Upcoming */}
+        {upcoming.length > 0 ? (
+          <UpcomingSession session={upcoming[0]} />
+        ) : (
+          <div style={{ ...glass, border: `2px dashed ${C.border}`, textAlign: 'center', padding: '32px' }}>
+            <div style={{ fontSize: '24px', marginBottom: '10px' }}>📅</div>
+            <div style={{ fontSize: '14px', fontWeight: 600, color: C.text, marginBottom: '6px' }}>No sessions scheduled yet</div>
+            <div style={{ fontSize: '13px', color: C.muted }}>Your mentor will schedule a session with you</div>
+          </div>
+        )}
+
+        {/* Stats row */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
+          {[
+            { label: 'Total sessions this semester', value: String(totalThisSem), color: C.purple },
+            { label: 'Average duration', value: avgDuration != null ? `${avgDuration} min` : '—', color: C.teal },
+            { label: 'Days since last session', value: daysSinceLast != null ? `${daysSinceLast} day${daysSinceLast !== 1 ? 's' : ''} ago` : 'No sessions yet', color: C.amber },
+          ].map(stat => (
+            <div key={stat.label} style={{ ...glass, padding: '16px' }}>
+              <div style={{ fontSize: '11px', color: C.muted, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{stat.label}</div>
+              <div style={{ fontSize: '18px', fontWeight: 700, color: stat.color }}>{stat.value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Past sessions timeline */}
+        <div>
+          <div style={{ fontSize: '15px', fontWeight: 600, color: C.text, marginBottom: '16px' }}>Past sessions</div>
+          {past.length === 0 ? (
+            <div style={{ ...glass, textAlign: 'center', padding: '32px', fontSize: '13px', color: C.muted }}>
+              No past sessions yet. Your first session will appear here.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+              {past.map((session, i) => (
+                <TimelineNode key={session.id} session={session} index={i} />
+              ))}
+            </div>
           )}
         </div>
 
-        {upcoming.length === 0 ? (
-          <div style={{
-            padding: '40px', textAlign: 'center', background: '#111118',
-            border: '1px solid rgba(255,255,255,0.06)', borderRadius: '24px',
-          }}>
-            <div style={{ fontSize: '14px', color: 'rgba(242,240,232,0.3)' }}>
-              No upcoming sessions scheduled
+        {/* Action items tracker */}
+        <div style={glass}>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: C.text, marginBottom: '12px' }}>Open action items</div>
+          {allActionItems.length === 0 ? (
+            <div style={{ padding: '16px', borderRadius: '10px', background: `${C.teal}11`, border: `1px solid ${C.teal}33`, fontSize: '13px', color: C.teal, textAlign: 'center' }}>
+              ✓ All caught up — no open action items
             </div>
-          </div>
-        ) : (
-          upcoming.map(s => <UpcomingSessionCard key={s._id} session={s} />)
-        )}
-      </div>
-
-      {/* Past sessions */}
-      <div>
-        <div style={{
-          fontSize: '16px', fontWeight: 600, color: 'rgba(242,240,232,0.7)',
-          marginBottom: '16px',
-        }}>
-          Past Sessions
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {allActionItems.map((ai, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', padding: '10px 14px', borderRadius: '10px', background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}` }}>
+                  <div style={{ width: 16, height: 16, borderRadius: '4px', border: `2px solid ${C.teal}66`, flexShrink: 0, marginTop: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ width: 6, height: 6, borderRadius: '2px', background: `${C.teal}88` }} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: '13px', color: C.text }}>
+                      {typeof ai.item === 'string' ? ai.item : ai.item?.text || ai.item?.item || JSON.stringify(ai.item)}
+                    </div>
+                    <div style={{ fontSize: '11px', color: C.muted, marginTop: '2px' }}>from session on {formatShortDate(ai.sessionDate)}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-        {past.map(s => (
-          <PastSessionRow
-            key={s._id}
-            session={s}
-            isExpanded={expandedPastId === s._id}
-            onToggle={() => setExpandedPastId(expandedPastId === s._id ? null : s._id)}
-          />
-        ))}
-      </div>
-    </motion.div>
+      </motion.div>
+    </>
   )
 }

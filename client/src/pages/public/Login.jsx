@@ -231,9 +231,10 @@ export default function Login() {
     setBtnState('loading')
     try {
       const res = await api.post('/auth/login', { email: data.email, password: data.password })
-      loginStore(res.data.user)
+      const user = res.data?.data?.user || res.data?.user
+      loginStore(user)
       setBtnState('success')
-      setTimeout(() => navigateByRole(res.data.user.role), 900)
+      setTimeout(() => navigateByRole(user.role), 900)
     } catch (err) {
       setBtnState('idle')
       setToastMsg(err?.response?.data?.message || 'Something went wrong. Please try again.')

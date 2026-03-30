@@ -1,295 +1,558 @@
-import { useState } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { motion, useReducedMotion } from 'framer-motion'
-import { Line } from 'react-chartjs-2'
+import { useNavigate } from 'react-router-dom'
+import { motion } from 'framer-motion'
 import {
   Chart as ChartJS,
-  LineElement,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  Tooltip,
-  Filler,
-  Legend,
+  LineController, LineElement, PointElement,
+  CategoryScale, LinearScale, Tooltip,
 } from 'chart.js'
-import { Download, ExternalLink, Award, TrendingUp, Flame } from 'lucide-react'
-import { format } from 'date-fns'
-import api from '../../services/api'
+import { Line } from 'react-chartjs-2'
 import { useAuthStore } from '../../store/authStore'
+import api from '../../services/api'
 
-ChartJS.register(LineElement, CategoryScale, LinearScale, PointElement, Tooltip, Filler, Legend)
+ChartJS.register(LineController, LineElement, PointElement, CategoryScale, LinearScale, Tooltip)
 
-function SkeletonBox({ h = 20, w = '100%', r = 8 }) {
-  return (
-    <div style={{
-      height: h, width: w, borderRadius: r,
-      background: 'rgba(255,255,255,0.04)',
-      animation: 'pfPulse 1.5s ease-in-out infinite',
-    }} />
-  )
+// ─── Design tokens ─────────────────────────────────────────────────────────────
+const C = {
+  border:  'rgba(255,255,255,0.06)',
+  text:    '#F2F0E8',
+  muted:   'rgba(242,240,232,0.45)',
+  subtle:  'rgba(242,240,232,0.18)',
+  green:   '#3DD68C',
+  amber:   '#F59E0B',
+  red:     '#EF4444',
+  teal:    '#2DD4BF',
+  purple:  '#A78BFA',
 }
 
-function getRiskColor(score) {
-  if (score < 40) return '#3DD68C'
-  if (score < 70) return '#F59E0B'
-  return '#EF4444'
+const glass = {
+  background: 'rgba(17,17,24,0.75)',
+  backdropFilter: 'blur(20px)',
+  WebkitBackdropFilter: 'blur(20px)',
+  border: `1px solid ${C.border}`,
+  borderRadius: '16px',
+  padding: '20px',
 }
 
-const MOOD_EMOJI = {
-  amazing: '🤩', great: '😊', good: '🙂',
-  okay: '😐', tough: '😔',
-  5: '🤩', 4: '😊', 3: '🙂', 2: '😐', 1: '😔',
-}
-function getMoodEmoji(mood) {
-  return MOOD_EMOJI[mood] ?? (mood && String(mood).length <= 2 ? mood : '😐')
-}
-
-function getRiskLabel(score) {
-  if (score < 40) return 'Low'
-  if (score < 70) return 'Medium'
-  return 'High'
+function currentAcademicYear() {
+  const now = new Date()
+  const y = now.getFullYear()
+  return now.getMonth() >= 5 ? `${y}-${String(y + 1).slice(2)}` : `${y - 1}-${String(y).slice(2)}`
 }
 
 function getInitials(name = '') {
-  const p = name.trim().split(' ')
-  return p.length >= 2 ? p[0][0] + p[p.length - 1][0] : p[0]?.[0] || 'S'
+  const parts = name.trim().split(/\s+/)
+  return parts.length >= 2
+    ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+    : (parts[0]?.[0] || '?').toUpperCase()
 }
 
-const CHART_OPTIONS = {
-  responsive: true,
-  plugins: {
-    legend: { display: true, position: 'bottom', labels: { color: 'rgba(242,240,232,0.4)', font: { size: 11 }, boxWidth: 20, padding: 16 } },
-    tooltip: { backgroundColor: 'rgba(11,11,17,0.95)', borderColor: 'rgba(255,255,255,0.1)', borderWidth: 1, titleColor: 'rgba(242,240,232,0.5)', bodyColor: 'rgba(242,240,232,0.8)', padding: 10 },
-  },
-  scales: {
-    x: { grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { color: 'rgba(242,240,232,0.2)', font: { size: 10 } }, border: { color: 'transparent' } },
-    y: { grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { color: 'rgba(242,240,232,0.2)', font: { size: 10 } }, border: { color: 'transparent' }, min: 0, max: 100 },
-  },
+function formatMonthYear(str) {
+  if (!str) return ''
+  return new Date(str).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
 }
 
-export default function Portfolio() {
-  const { user } = useAuthStore()
-  const reduced = useReducedMotion()
+function formatDate(str) {
+  if (!str) return ''
+  return new Date(str).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+}
 
-  const { data: response, isLoading, isError, refetch } = useQuery({
-    queryKey: ['portfolio'],
-    queryFn: () => api.get('/analytics/portfolio').then(r => r.data),
-  })
+function getCgpaColor(v) {
+  if (v >= 8.5) return C.teal
+  if (v >= 7) return C.purple
+  if (v >= 6) return C.amber
+  return C.red
+}
 
-  const portfolio = response?.data ?? null
+const GRADE_MAP = { O: 10, 'A+': 9, A: 8, 'B+': 7, B: 6, C: 5, F: 0 }
 
-  const chartData = portfolio ? {
-    labels: portfolio.riskTrend.map(p => p.weekLabel),
-    datasets: [
-      {
-        label: 'Risk Score',
-        data: portfolio.riskTrend.map(p => p.riskScore),
-        borderColor: '#E8B84B', backgroundColor: 'rgba(232,184,75,0.05)',
-        tension: 0.4, fill: false, pointBackgroundColor: '#E8B84B', pointRadius: 3, borderWidth: 1.5,
-      },
-      {
-        label: 'Sentiment Score',
-        data: portfolio.riskTrend.map(p => p.sentimentScore),
-        borderColor: '#3DD68C', backgroundColor: 'rgba(61,214,140,0.05)',
-        tension: 0.4, fill: false, pointBackgroundColor: '#3DD68C', pointRadius: 3, borderWidth: 1.5,
-      },
-    ],
-  } : null
+const Skel = ({ h = 16, w = '100%', r = 8 }) => (
+  <div style={{ height: h, width: w, borderRadius: r, background: 'rgba(255,255,255,0.05)', animation: 'pfPulse 1.5s ease-in-out infinite' }} />
+)
 
-  const avgRisk = portfolio?.summary?.averageRiskScore ?? 0
+const typeColors = { event: C.teal, course: C.purple, competition: C.amber, other: C.subtle }
+const typeIcons = {
+  event: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  ),
+  course: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+    </svg>
+  ),
+  competition: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="8" r="6" /><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11" />
+    </svg>
+  ),
+  other: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+    </svg>
+  ),
+}
+
+// ─── CGPA Sparkline ───────────────────────────────────────────────────────────
+function CGPASparkline({ marksData }) {
+  const points = useMemo(() => {
+    return [...marksData].sort((a, b) => a.semester - b.semester).filter(m => m.cgpa != null).map(m => m.cgpa)
+  }, [marksData])
+
+  if (!points.length) return <div style={{ width: 200, height: 60, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '11px', color: C.muted }}>No data</div>
+
+  const data = {
+    labels: points.map((_, i) => `S${i + 1}`),
+    datasets: [{
+      data: points,
+      borderColor: C.purple,
+      borderWidth: 2,
+      tension: 0.3,
+      fill: false,
+      pointRadius: 3,
+      pointBackgroundColor: C.purple,
+    }],
+  }
+  const options = {
+    responsive: false,
+    animation: { duration: 800 },
+    plugins: { legend: { display: false }, tooltip: { enabled: false } },
+    scales: {
+      x: { display: false },
+      y: { display: false, min: 0, max: 10 },
+    },
+  }
+
+  return <Line data={data} options={options} width={200} height={60} />
+}
+
+// ─── Achievement Card ─────────────────────────────────────────────────────────
+function AchievementCard({ achievement }) {
+  const typeColor = typeColors[achievement.type] || C.subtle
+  const icon = typeIcons[achievement.type] || typeIcons.other
 
   return (
-    <motion.div
-      initial={reduced ? {} : { opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={reduced ? {} : { opacity: 0 }}
-      transition={{ duration: 0.35, ease: [0.25, 0.1, 0.25, 1] }}
-    >
-      <style>{`@keyframes pfPulse{0%,100%{opacity:1}50%{opacity:0.45}}`}</style>
+    <motion.div whileHover={{ scale: 1.01 }} style={{ ...glass, padding: '16px', position: 'relative' }}>
+      {/* Type badge */}
+      <div style={{ position: 'absolute', top: '14px', right: '14px', fontSize: '11px', fontWeight: 700, padding: '2px 10px', borderRadius: '999px', background: `${typeColor}22`, border: `1px solid ${typeColor}55`, color: typeColor, textTransform: 'capitalize' }}>
+        {achievement.type}
+      </div>
 
-      {/* Page header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '28px' }}>
+      {/* Icon + title */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', marginBottom: '8px', paddingRight: '80px' }}>
+        <div style={{ color: typeColor, flexShrink: 0, marginTop: '2px' }}>{icon}</div>
+        <div style={{ fontSize: '14px', fontWeight: 600, color: C.text, lineHeight: 1.4 }}>{achievement.title}</div>
+      </div>
+
+      {achievement.description && (
+        <div style={{ fontSize: '12px', color: C.muted, lineHeight: 1.5, marginBottom: '10px', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+          {achievement.description}
+        </div>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+        {achievement.date && <span style={{ fontSize: '11px', color: C.muted }}>{formatDate(achievement.date)}</span>}
+        <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '999px', background: 'rgba(255,255,255,0.06)', border: `1px solid ${C.border}`, color: C.muted }}>Sem {achievement.semester}</span>
+        {achievement.proof_url && (
+          <a href={achievement.proof_url} target="_blank" rel="noreferrer"
+            style={{ fontSize: '11px', color: C.purple, textDecoration: 'none', marginLeft: 'auto' }}>
+            View certificate →
+          </a>
+        )}
+      </div>
+    </motion.div>
+  )
+}
+
+// ─── Semester Summary Card ────────────────────────────────────────────────────
+function SemesterCard({ sem, marksData, diaryEntries, achievements, attendanceHistory, isCurrent }) {
+  const semMarks = marksData.find(m => m.semester === sem)
+  const semEntries = diaryEntries.filter(e => e.semester === sem)
+  const semAchievements = achievements.filter(a => a.semester === sem)
+  const lastAtt = attendanceHistory.length > 0 ? attendanceHistory[attendanceHistory.length - 1] : null
+
+  const riskDots = semEntries.slice(-5).map(e => e.ai_risk_score)
+  const getRiskDotColor = (score) => {
+    if (score == null) return 'rgba(255,255,255,0.08)'
+    if (score < 30) return C.green
+    if (score < 60) return C.amber
+    return C.red
+  }
+
+  return (
+    <div style={{
+      ...glass,
+      width: '200px',
+      flexShrink: 0,
+      borderTop: `3px solid ${C.purple}`,
+      ...(isCurrent ? { border: `2px dashed ${C.purple}66`, borderTop: `3px solid ${C.purple}` } : {}),
+      position: 'relative',
+    }}>
+      {isCurrent && (
+        <div style={{ position: 'absolute', top: '12px', right: '12px', fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '999px', background: `${C.amber}22`, border: `1px solid ${C.amber}55`, color: C.amber }}>In progress</div>
+      )}
+      <div style={{ fontSize: '13px', fontWeight: 700, color: C.purple, marginBottom: '12px' }}>Semester {sem}</div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
         <div>
-          <h1 style={{ fontFamily: '"Sora",system-ui', fontSize: '24px', fontWeight: 700, color: '#F2F0E8', margin: 0 }}>Portfolio</h1>
-          <p style={{ fontSize: '13px', color: 'rgba(242,240,232,0.4)', margin: '6px 0 0' }}>
-            {portfolio ? `${portfolio.summary.academicYear} · ${portfolio.summary.totalEntries} entries` : 'Your semester journey'}
-          </p>
+          <div style={{ fontSize: '10px', color: C.muted, marginBottom: '2px' }}>CGPA</div>
+          <div style={{ fontSize: '22px', fontWeight: 900, color: semMarks?.cgpa != null ? getCgpaColor(semMarks.cgpa) : C.subtle }}>
+            {semMarks?.cgpa != null ? semMarks.cgpa.toFixed(2) : '—'}
+          </div>
         </div>
-        <button style={{
-          display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px',
-          borderRadius: '12px', fontSize: '12px', background: 'rgba(232,184,75,0.1)',
-          color: '#E8B84B', border: '1px solid rgba(232,184,75,0.2)', cursor: 'pointer', fontFamily: 'inherit',
-        }}>
-          <Download size={14} /> Export PDF
-        </button>
-      </div>
-
-      {/* Error state */}
-      {isError && (
-        <div style={{
-          background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)',
-          borderRadius: '16px', padding: '24px', textAlign: 'center', marginBottom: '24px',
-        }}>
-          <p style={{ color: 'rgba(239,68,68,0.8)', fontSize: '14px', margin: '0 0 12px' }}>Failed to load portfolio data.</p>
-          <button onClick={() => refetch()} style={{
-            padding: '8px 20px', borderRadius: '10px', fontSize: '13px',
-            background: 'rgba(239,68,68,0.1)', color: '#ef4444',
-            border: '1px solid rgba(239,68,68,0.2)', cursor: 'pointer', fontFamily: 'inherit',
-          }}>Retry</button>
+        <div>
+          <div style={{ fontSize: '10px', color: C.muted, marginBottom: '2px' }}>Attendance</div>
+          <div style={{ fontSize: '14px', fontWeight: 700, color: lastAtt ? (lastAtt.cumulative_pct >= 75 ? C.green : C.red) : C.muted }}>
+            {lastAtt ? `${Math.round(lastAtt.cumulative_pct)}%` : '—'}
+          </div>
         </div>
-      )}
-
-      {/* Summary hero card */}
-      <div style={{
-        background: 'linear-gradient(135deg,#111118 0%,#16161F 100%)',
-        border: '1px solid rgba(232,184,75,0.08)', borderRadius: '24px',
-        padding: '32px', marginBottom: '24px',
-      }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '24px', marginBottom: '24px' }}>
+        <div style={{ display: 'flex', gap: '12px' }}>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-              <Award size={16} style={{ color: '#E8B84B' }} />
-              <span style={{ fontSize: '11px', color: 'rgba(242,240,232,0.4)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Entries</span>
-            </div>
-            {isLoading ? <SkeletonBox h={42} r={6} /> : (
-              <>
-                <div style={{ fontSize: '36px', fontWeight: 900, color: '#F2F0E8', lineHeight: 1 }}>{portfolio?.summary?.totalEntries ?? 0}</div>
-                <div style={{ fontSize: '12px', color: 'rgba(242,240,232,0.35)', marginTop: '4px' }}>this semester</div>
-              </>
-            )}
+            <div style={{ fontSize: '10px', color: C.muted, marginBottom: '2px' }}>Entries</div>
+            <div style={{ fontSize: '14px', fontWeight: 700, color: C.text }}>{semEntries.length}</div>
           </div>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-              <TrendingUp size={16} style={{ color: getRiskColor(avgRisk) }} />
-              <span style={{ fontSize: '11px', color: 'rgba(242,240,232,0.4)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Avg Risk</span>
-            </div>
-            {isLoading ? <SkeletonBox h={42} r={6} /> : (
-              <>
-                <div style={{ fontSize: '36px', fontWeight: 900, color: getRiskColor(avgRisk), lineHeight: 1 }}>{avgRisk}</div>
-                <span style={{
-                  fontSize: '11px', padding: '2px 8px', borderRadius: '999px', marginTop: '4px', display: 'inline-block',
-                  background: `${getRiskColor(avgRisk)}15`, color: getRiskColor(avgRisk), border: `1px solid ${getRiskColor(avgRisk)}25`,
-                }}>{getRiskLabel(avgRisk)} Risk</span>
-              </>
-            )}
+            <div style={{ fontSize: '10px', color: C.muted, marginBottom: '2px' }}>Achievements</div>
+            <div style={{ fontSize: '14px', fontWeight: 700, color: C.text }}>{semAchievements.length}</div>
           </div>
+        </div>
+        {riskDots.length > 0 && (
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
-              <Flame size={16} style={{ color: '#E8B84B' }} />
-              <span style={{ fontSize: '11px', color: 'rgba(242,240,232,0.4)', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Streak</span>
+            <div style={{ fontSize: '10px', color: C.muted, marginBottom: '4px' }}>Risk trend</div>
+            <div style={{ display: 'flex', gap: '4px' }}>
+              {riskDots.map((s, i) => (
+                <div key={i} style={{ width: 8, height: 8, borderRadius: '50%', background: getRiskDotColor(s) }} />
+              ))}
             </div>
-            {isLoading ? <SkeletonBox h={42} r={6} /> : (
-              <>
-                <div style={{ fontSize: '36px', fontWeight: 900, color: '#E8B84B', lineHeight: 1 }}>🔥 {portfolio?.summary?.currentStreak ?? 0}</div>
-                <div style={{ fontSize: '12px', color: 'rgba(242,240,232,0.35)', marginTop: '4px' }}>weeks</div>
-              </>
-            )}
-          </div>
-        </div>
-
-        <div style={{ height: '1px', background: 'rgba(255,255,255,0.06)', margin: '4px 0 20px' }} />
-
-        <div style={{ borderLeft: '3px solid rgba(232,184,75,0.4)', paddingLeft: '16px' }}>
-          <div style={{ fontSize: '11px', color: 'rgba(232,184,75,0.6)', marginBottom: '8px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.04em' }}>AI Summary</div>
-          {isLoading
-            ? <><SkeletonBox h={13} r={4} /><div style={{ marginTop: 6 }} /><SkeletonBox h={13} w="80%" r={4} /></>
-            : <p style={{ fontSize: '13px', color: 'rgba(242,240,232,0.55)', lineHeight: 1.7, margin: 0, fontStyle: 'italic' }}>{portfolio?.aiSummary}</p>
-          }
-        </div>
-      </div>
-
-      {/* Growth chart */}
-      {(isLoading || chartData) && (
-        <div style={{ background: '#111118', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '16px', padding: '24px', marginBottom: '24px' }}>
-          <div style={{ fontSize: '15px', fontWeight: 600, color: 'rgba(242,240,232,0.7)', marginBottom: '16px' }}>Growth Chart</div>
-          {isLoading
-            ? <SkeletonBox h={120} r={8} />
-            : chartData && <Line height={50} data={chartData} options={CHART_OPTIONS} />
-          }
-        </div>
-      )}
-
-      {/* Subject performance */}
-      {!isLoading && portfolio?.subjectPerformance?.length > 0 && (
-        <div style={{ background: '#111118', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '16px', padding: '20px', marginBottom: '24px' }}>
-          <div style={{ fontSize: '15px', fontWeight: 600, color: 'rgba(242,240,232,0.7)', marginBottom: '14px' }}>Subject Performance</div>
-          {portfolio.subjectPerformance.map((s, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
-              <span style={{ fontSize: '13px', color: 'rgba(242,240,232,0.7)', flex: 1 }}>{s.subject}</span>
-              <div style={{ width: '100px', height: '4px', background: 'rgba(255,255,255,0.06)', borderRadius: '999px' }}>
-                <div style={{ width: `${(s.avgRating / 5) * 100}%`, height: '100%', background: '#E8B84B', borderRadius: '999px' }} />
-              </div>
-              <span style={{ fontSize: '12px', color: '#E8B84B', width: '28px', textAlign: 'right' }}>{s.avgRating}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Recent entries grid */}
-      <div style={{ marginBottom: '28px' }}>
-        <div style={{ fontSize: '15px', fontWeight: 600, color: 'rgba(242,240,232,0.7)', marginBottom: '14px' }}>Recent Entries</div>
-        {isLoading ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: '12px' }}>
-            {[...Array(6)].map((_, i) => <SkeletonBox key={i} h={100} r={14} />)}
-          </div>
-        ) : (portfolio?.recentEntries ?? []).length === 0 ? (
-          <div style={{ padding: '40px', textAlign: 'center', color: 'rgba(242,240,232,0.25)', fontSize: '13px' }}>
-            No entries yet. Submit your first diary entry to get started.
-          </div>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(200px,1fr))', gap: '12px' }}>
-            {(portfolio?.recentEntries ?? []).map((entry, i) => (
-              <motion.div
-                key={entry.id}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.05, duration: 0.3 }}
-                whileHover={{ y: -2, borderColor: 'rgba(255,255,255,0.1)' }}
-                style={{ background: '#0C0C12', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '14px', padding: '14px', cursor: 'pointer', transition: 'border-color 0.2s' }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
-                  <span style={{ fontSize: '18px' }}>{getMoodEmoji(entry.mood)}</span>
-                  <span style={{ fontSize: '11px', fontWeight: 600, color: 'rgba(232,184,75,0.8)' }}>
-                    {entry.week ? `Wk ${entry.week}` : entry.periodLabel || '—'}
-                  </span>
-                  <span style={{ marginLeft: 'auto', fontSize: '10px', padding: '1px 6px', borderRadius: '999px', background: `${getRiskColor(entry.riskScore ?? 0)}15`, color: getRiskColor(entry.riskScore ?? 0) }}>{entry.riskScore ?? 0}</span>
-                </div>
-                <p style={{ fontSize: '11px', color: 'rgba(242,240,232,0.45)', margin: 0, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                  {entry.reflection || ''}
-                </p>
-                <div style={{ fontSize: '10px', color: 'rgba(242,240,232,0.2)', marginTop: '8px' }}>
-                  {format(new Date(entry.createdAt), 'MMM d')}
-                </div>
-              </motion.div>
-            ))}
           </div>
         )}
       </div>
+    </div>
+  )
+}
 
-      {/* Export section */}
-      <div style={{ background: '#111118', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '20px', padding: '28px' }}>
-        <div style={{ fontSize: '16px', fontWeight: 600, color: '#F2F0E8', marginBottom: '6px' }}>Share your journey</div>
-        <p style={{ fontSize: '13px', color: 'rgba(242,240,232,0.4)', margin: '0 0 20px' }}>Export your portfolio for academic records or share with your institution</p>
-        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-          <button style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 24px', borderRadius: '14px', fontSize: '13px', background: 'linear-gradient(135deg,#E8B84B,#F5D380)', color: '#06060A', fontWeight: 700, border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>
-            <Download size={16} /> Export as PDF
-          </button>
-          <button style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 24px', borderRadius: '14px', fontSize: '13px', background: 'rgba(255,255,255,0.04)', color: 'rgba(242,240,232,0.6)', border: '1px solid rgba(255,255,255,0.07)', cursor: 'pointer', fontFamily: 'inherit' }}>
-            <ExternalLink size={16} /> Copy shareable link
-          </button>
+// ─── Main ─────────────────────────────────────────────────────────────────────
+export default function Portfolio() {
+  const { user } = useAuthStore()
+  const navigate = useNavigate()
+  const academicYear = currentAcademicYear()
+  const semester = user?.current_semester ?? 1
+
+  const [achievementFilter, setAchievementFilter] = useState('all')
+  const [marksTab, setMarksTab] = useState(semester)
+
+  // Fetch all data in parallel
+  const { data: marksData, isLoading: marksLoading } = useQuery({
+    queryKey: ['marks', 'all'],
+    queryFn: () => api.get('/marks').then(r => r.data),
+    staleTime: 5 * 60 * 1000, retry: 1,
+  })
+
+  const { data: achievementsData, isLoading: achievementsLoading } = useQuery({
+    queryKey: ['achievements', 'all'],
+    queryFn: () => api.get('/achievements').then(r => r.data),
+    staleTime: 5 * 60 * 1000, retry: 1,
+  })
+
+  const { data: diaryData } = useQuery({
+    queryKey: ['diary', 'list', { semester, academic_year: academicYear }],
+    queryFn: () => api.get('/diary', { params: { semester, academic_year: academicYear, limit: 100 } }).then(r => r.data),
+    staleTime: 5 * 60 * 1000, retry: 1,
+  })
+
+  const { data: attendanceData } = useQuery({
+    queryKey: ['attendance', 'history', { semester, academic_year: academicYear }],
+    queryFn: () => api.get('/attendance/me/history', { params: { semester, year: academicYear } }).then(r => r.data),
+    staleTime: 5 * 60 * 1000, retry: 1,
+  })
+
+  const allMarks = useMemo(() => marksData?.data || [], [marksData])
+  const allAchievements = useMemo(() => achievementsData?.data || [], [achievementsData])
+  const diaryEntries = useMemo(() => diaryData?.data || [], [diaryData])
+  const attendanceHistory = useMemo(() => attendanceData?.data || [], [attendanceData])
+
+  const activeMarksEntry = useMemo(() => allMarks.find(m => m.semester === marksTab) || null, [allMarks, marksTab])
+
+  const cgpas = useMemo(() => allMarks.filter(m => m.cgpa != null).map(m => m.cgpa), [allMarks])
+  const latestCgpa = cgpas[cgpas.length - 1] ?? null
+  const highestCgpa = cgpas.length ? Math.max(...cgpas) : null
+  const highestSem = highestCgpa != null ? (allMarks.find(m => m.cgpa === highestCgpa)?.semester ?? null) : null
+  const avgCgpa = cgpas.length ? (cgpas.reduce((s, v) => s + v, 0) / cgpas.length) : null
+
+  // Available semesters for section 3
+  const availableSemesters = useMemo(() => {
+    const s = new Set(allMarks.map(m => m.semester))
+    s.add(semester)
+    return [...s].sort((a, b) => a - b)
+  }, [allMarks, semester])
+
+  // Filtered achievements
+  const filteredAchievements = useMemo(() => {
+    if (achievementFilter === 'all') return allAchievements
+    return allAchievements.filter(a => a.type === achievementFilter)
+  }, [allAchievements, achievementFilter])
+
+  // Unique semesters for summary
+  const summarySemsSet = useMemo(() => {
+    const s = new Set(allMarks.map(m => m.semester))
+    s.add(semester)
+    return [...s].sort((a, b) => a - b)
+  }, [allMarks, semester])
+
+  // Course achievements (for skills section)
+  const courseAchievements = useMemo(() => allAchievements.filter(a => a.type === 'course'), [allAchievements])
+
+  const coursesByPlatform = useMemo(() => {
+    const map = {}
+    courseAchievements.forEach(a => {
+      const p = a.platform || 'Other'
+      if (!map[p]) map[p] = []
+      map[p].push(a)
+    })
+    return map
+  }, [courseAchievements])
+
+  const isLoading = marksLoading || achievementsLoading
+
+  if (isLoading) {
+    return (
+      <>
+        <style>{`@keyframes pfPulse { 0%,100%{opacity:0.4} 50%{opacity:0.8} }`}</style>
+        <div style={{ maxWidth: '1000px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div style={glass}><Skel h={100} /></div>
+          <div style={glass}><Skel h={80} /></div>
+          <div style={glass}><Skel h={200} /></div>
+          <div style={glass}><Skel h={160} /></div>
         </div>
-        <div style={{ marginTop: '20px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '12px', padding: '16px', display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <div style={{ width: '48px', height: '64px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            <div style={{ fontSize: '8px', color: 'rgba(242,240,232,0.2)', textAlign: 'center', lineHeight: 1.3 }}>PDF<br />Preview</div>
-          </div>
-          <div>
-            <div style={{ fontSize: '12px', color: 'rgba(242,240,232,0.5)' }}>MentoringDiaries Portfolio</div>
-            <div style={{ fontSize: '11px', color: 'rgba(242,240,232,0.25)', marginTop: '2px' }}>
-              {user?.name || 'Student'} · {portfolio?.summary?.academicYear ?? '—'} · {portfolio?.summary?.totalEntries ?? 0} entries
+      </>
+    )
+  }
+
+  return (
+    <>
+      <style>{`@keyframes pfPulse { 0%,100%{opacity:0.4} 50%{opacity:0.8} }`}</style>
+      <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} style={{ maxWidth: '1000px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+
+        {/* ── Section 1: Profile card ── */}
+        <div style={glass}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '20px', flexWrap: 'wrap' }}>
+            {/* Avatar */}
+            <div style={{ width: 80, height: 80, borderRadius: '50%', background: `linear-gradient(135deg, ${C.purple}66, ${C.teal}44)`, border: `2px solid ${C.purple}55`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '28px', fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+              {getInitials(user?.name || '')}
+            </div>
+
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <h1 style={{ fontSize: '22px', fontWeight: 700, color: C.text, margin: '0 0 6px' }}>{user?.name || '—'}'s Portfolio</h1>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                {[
+                  user?.department,
+                  user?.section ? `Section ${user.section}` : null,
+                  user?.roll_number ? `Roll ${user.roll_number}` : null,
+                  user?.batch ? `Batch ${user.batch}` : null,
+                ].filter(Boolean).map(item => (
+                  <span key={item} style={{ fontSize: '12px', padding: '2px 10px', borderRadius: '999px', background: 'rgba(255,255,255,0.07)', border: `1px solid ${C.border}`, color: C.muted }}>{item}</span>
+                ))}
+              </div>
+              <div style={{ fontSize: '13px', color: C.muted, display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
+                <span>Semester {semester}</span>
+                {user?.email && <span>{user.email}</span>}
+                {user?.created_at && <span>Member since {formatMonthYear(user.created_at)}</span>}
+              </div>
+              {user?.mentor_id ? (
+                <div style={{ marginTop: '8px', fontSize: '12px', color: C.teal }}>✓ Mentor assigned</div>
+              ) : (
+                <div style={{ marginTop: '8px', fontSize: '12px', color: C.muted }}>No mentor assigned</div>
+              )}
             </div>
           </div>
         </div>
-      </div>
-    </motion.div>
+
+        {/* ── Section 2: CGPA overview ── */}
+        <div style={glass}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '24px', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: C.text, marginBottom: '4px' }}>Academic performance</div>
+              <div style={{ fontSize: '12px', color: C.muted }}>{allMarks.length} semester{allMarks.length !== 1 ? 's' : ''} of records</div>
+            </div>
+
+            {allMarks.length > 0 && (
+              <div style={{ flexShrink: 0 }}>
+                <CGPASparkline marksData={allMarks} />
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+              {[
+                { label: 'Latest CGPA', value: latestCgpa != null ? latestCgpa.toFixed(2) : '—', color: latestCgpa != null ? getCgpaColor(latestCgpa) : C.subtle },
+                { label: `Highest (Sem ${highestSem || '—'})`, value: highestCgpa != null ? highestCgpa.toFixed(2) : '—', color: highestCgpa != null ? getCgpaColor(highestCgpa) : C.subtle },
+                { label: 'Average', value: avgCgpa != null ? avgCgpa.toFixed(2) : '—', color: avgCgpa != null ? getCgpaColor(avgCgpa) : C.subtle },
+              ].map(stat => (
+                <div key={stat.label} style={{ padding: '12px 16px', borderRadius: '12px', background: 'rgba(255,255,255,0.04)', border: `1px solid ${C.border}`, minWidth: '90px', textAlign: 'center' }}>
+                  <div style={{ fontSize: '10px', color: C.muted, marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{stat.label}</div>
+                  <div style={{ fontSize: '20px', fontWeight: 900, color: stat.color }}>{stat.value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Section 3: Academic records ── */}
+        <div style={glass}>
+          <div style={{ fontSize: '15px', fontWeight: 600, color: C.text, marginBottom: '16px' }}>Academic records</div>
+
+          {/* Semester tabs */}
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '16px' }}>
+            {availableSemesters.map(sem => (
+              <button key={sem} onClick={() => setMarksTab(sem)}
+                style={{ padding: '6px 14px', borderRadius: '999px', fontSize: '12px', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: marksTab === sem ? C.purple : 'rgba(255,255,255,0.06)', border: `1px solid ${marksTab === sem ? C.purple : C.border}`, color: marksTab === sem ? '#fff' : C.muted, transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                Sem {sem}
+                {sem !== semester && <span style={{ fontSize: '10px', opacity: 0.6 }}>🔒</span>}
+              </button>
+            ))}
+          </div>
+
+          {activeMarksEntry ? (
+            <>
+              <div style={{ borderRadius: '10px', overflow: 'hidden', border: `1px solid ${C.border}`, marginBottom: '16px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: 'rgba(255,255,255,0.04)' }}>
+                      <th style={{ padding: '10px 16px', textAlign: 'left', fontSize: '11px', fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Subject</th>
+                      <th style={{ padding: '10px 16px', textAlign: 'center', fontSize: '11px', fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Grade</th>
+                      <th style={{ padding: '10px 16px', textAlign: 'center', fontSize: '11px', fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Points</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(activeMarksEntry.subjects || []).map((s, i) => (
+                      <tr key={i} style={{ borderTop: `1px solid ${C.border}` }}>
+                        <td style={{ padding: '10px 16px', fontSize: '13px', color: C.text }}>{s.subject_name}</td>
+                        <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                          <span style={{ fontSize: '13px', fontWeight: 700, padding: '3px 12px', borderRadius: '999px', background: 'rgba(167,139,250,0.15)', border: `1px solid ${C.purple}55`, color: C.purple }}>{s.grade}</span>
+                        </td>
+                        <td style={{ padding: '10px 16px', textAlign: 'center', fontSize: '13px', color: C.muted }}>{GRADE_MAP[s.grade] ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {activeMarksEntry.cgpa != null && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                  <span style={{ fontSize: '13px', color: C.muted }}>CGPA</span>
+                  <span style={{ fontSize: '28px', fontWeight: 900, color: getCgpaColor(activeMarksEntry.cgpa) }}>{activeMarksEntry.cgpa.toFixed(2)}</span>
+                </div>
+              )}
+              {marksTab === semester && activeMarksEntry.submission_count < 2 && (
+                <button onClick={() => navigate('/student/submit')}
+                  style={{ padding: '7px 18px', borderRadius: '8px', background: 'rgba(167,139,250,0.12)', border: `1px solid ${C.purple}44`, color: C.purple, cursor: 'pointer', fontSize: '12px', fontFamily: 'inherit', fontWeight: 600 }}>
+                  Edit marks →
+                </button>
+              )}
+              {marksTab !== semester && (
+                <div style={{ padding: '10px 14px', borderRadius: '10px', background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, fontSize: '13px', color: C.muted }}>
+                  🔒 This is a locked semester record. Contact admin to unlock.
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ textAlign: 'center', padding: '32px' }}>
+              <div style={{ fontSize: '13px', color: C.muted, marginBottom: '12px' }}>No marks submitted for Semester {marksTab}</div>
+              {marksTab === semester && (
+                <button onClick={() => navigate('/student/submit')}
+                  style={{ padding: '8px 20px', borderRadius: '10px', background: 'rgba(167,139,250,0.12)', border: `1px solid ${C.purple}44`, color: C.purple, cursor: 'pointer', fontSize: '13px', fontFamily: 'inherit' }}>
+                  Submit marks →
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* ── Section 4: Achievements wall ── */}
+        <div style={glass}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px', marginBottom: '16px' }}>
+            <div>
+              <div style={{ fontSize: '15px', fontWeight: 600, color: C.text }}>Achievements</div>
+              <div style={{ fontSize: '12px', color: C.muted, marginTop: '2px' }}>
+                {allAchievements.length} achievement{allAchievements.length !== 1 ? 's' : ''}
+                {allAchievements.length > 0 && ` across ${new Set(allAchievements.map(a => a.semester)).size} semester${new Set(allAchievements.map(a => a.semester)).size !== 1 ? 's' : ''}`}
+              </div>
+            </div>
+
+            {/* Filter tabs */}
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+              {[['all','All'],['event','Events'],['course','Courses'],['competition','Competitions'],['other','Other']].map(([key, label]) => (
+                <button key={key} onClick={() => setAchievementFilter(key)}
+                  style={{ padding: '5px 12px', borderRadius: '999px', fontSize: '11px', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit', background: achievementFilter === key ? C.purple : 'rgba(255,255,255,0.06)', border: `1px solid ${achievementFilter === key ? C.purple : C.border}`, color: achievementFilter === key ? '#fff' : C.muted }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {filteredAchievements.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '32px' }}>
+              <div style={{ fontSize: '24px', marginBottom: '10px' }}>🏆</div>
+              <div style={{ fontSize: '13px', color: C.muted, marginBottom: '12px' }}>No achievements logged yet.</div>
+              <button onClick={() => navigate('/student/submit')}
+                style={{ padding: '7px 18px', borderRadius: '8px', background: 'rgba(167,139,250,0.12)', border: `1px solid ${C.purple}44`, color: C.purple, cursor: 'pointer', fontSize: '12px', fontFamily: 'inherit' }}>
+                Log your first achievement in Write Entry →
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '12px' }}>
+              {filteredAchievements.map(a => <AchievementCard key={a.id} achievement={a} />)}
+            </div>
+          )}
+        </div>
+
+        {/* ── Section 5: Semester summary cards (only if multiple semesters) ── */}
+        {summarySemsSet.length > 1 && (
+          <div style={glass}>
+            <div style={{ fontSize: '15px', fontWeight: 600, color: C.text, marginBottom: '16px' }}>Semester overview</div>
+            <div style={{ display: 'flex', gap: '12px', overflowX: 'auto', paddingBottom: '8px' }}>
+              {summarySemsSet.map(sem => (
+                <SemesterCard
+                  key={sem}
+                  sem={sem}
+                  marksData={allMarks}
+                  diaryEntries={diaryEntries}
+                  achievements={allAchievements}
+                  attendanceHistory={sem === semester ? attendanceHistory : []}
+                  isCurrent={sem === semester}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Section 6: Skills and certifications (only if courses exist) ── */}
+        {courseAchievements.length > 0 && (
+          <div style={glass}>
+            <div style={{ fontSize: '15px', fontWeight: 600, color: C.text, marginBottom: '16px' }}>Skills & certifications</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {Object.entries(coursesByPlatform).map(([platform, courses]) => (
+                <div key={platform}>
+                  <div style={{ fontSize: '11px', fontWeight: 700, color: C.muted, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '10px' }}>{platform}</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {courses.map(course => (
+                      <div key={course.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderRadius: '10px', background: 'rgba(255,255,255,0.03)', border: `1px solid ${C.border}`, flexWrap: 'wrap', gap: '8px' }}>
+                        <div>
+                          <div style={{ fontSize: '13px', fontWeight: 600, color: C.text }}>{course.title}</div>
+                          {course.date && <div style={{ fontSize: '11px', color: C.muted, marginTop: '2px' }}>{formatDate(course.date)}</div>}
+                        </div>
+                        {course.proof_url && (
+                          <a href={course.proof_url} target="_blank" rel="noreferrer" style={{ fontSize: '12px', color: C.purple, textDecoration: 'none', whiteSpace: 'nowrap' }}>View certificate →</a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </motion.div>
+    </>
   )
 }

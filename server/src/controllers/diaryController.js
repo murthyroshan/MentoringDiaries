@@ -143,6 +143,8 @@ exports.createEntry = async (req, res, next) => {
                 attendanceExplanation: attendance_explanation,
                 avgSubjectRating,
                 emotionalRating: Number(mood || 3),
+                subjectRatings: parsedRatings,
+                weeklyDifficulty: weekly_difficulty ? Number(weekly_difficulty) : null,
             },
             consecutiveHighCount
         );

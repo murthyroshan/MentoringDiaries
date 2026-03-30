@@ -25,3 +25,15 @@ export function getWeekDateRange(weekNumber, year) {
 
   return { startDate, endDate }
 }
+
+/**
+ * Returns the current ISO week number for today's date.
+ */
+export function getCurrentISOWeek() {
+  const now = new Date()
+  const jan4 = new Date(Date.UTC(now.getUTCFullYear(), 0, 4))
+  const dayOfWeek = jan4.getUTCDay() || 7
+  const week1Monday = new Date(Date.UTC(now.getUTCFullYear(), 0, 4 - (dayOfWeek - 1)))
+  const diff = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - week1Monday.getTime()
+  return Math.floor(diff / (7 * 24 * 60 * 60 * 1000)) + 1
+}

@@ -37,9 +37,10 @@ export const useAuthStore = create(
                 // assignedMentor etc.) and confirms the token is still valid.
                 try {
                     const { data } = await api.get('/auth/me')
-                    set({ user: data.user, isAuthenticated: true, hasCheckedAuth: true })
-                    connectSocket(data.user._id, data.user.role)
-                    return data.user
+                    const user = data.data?.user || data.user
+                    set({ user, isAuthenticated: true, hasCheckedAuth: true })
+                    connectSocket(user.id || user._id, user.role)
+                    return user
                 } catch {
                     set({ user: null, isAuthenticated: false, hasCheckedAuth: true })
                     return null
@@ -48,7 +49,7 @@ export const useAuthStore = create(
 
             login: (user) => {
                 set({ user, isAuthenticated: true })
-                connectSocket(user._id, user.role)
+                connectSocket(user.id || user._id, user.role)
             },
 
             logout: async () => {
@@ -71,7 +72,7 @@ export const useAuthStore = create(
             // hard refresh. Full user data is always fetched fresh from /auth/me.
             partialize: (state) => ({
                 user: state.user
-                    ? { _id: state.user._id, name: state.user.name, role: state.user.role }
+                    ? { id: state.user.id, _id: state.user._id, name: state.user.name, role: state.user.role }
                     : null,
                 isAuthenticated: state.isAuthenticated,
             }),

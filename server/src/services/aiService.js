@@ -75,6 +75,51 @@ function riskToScore(riskLevel) {
     return 18;
 }
 
+function calculateRiskScore(subjectRatings, mood, attendancePct, weeklyDifficulty) {
+    // Factor 1 — Subject performance (weight: 35%)
+    let subjectRisk;
+    if (!subjectRatings || subjectRatings.length === 0) {
+        subjectRisk = ((5 - (mood || 3)) / 4) * 100; // fall back to mood-based
+    } else {
+        const avgRating = subjectRatings.reduce((s, r) => s + (Number(r.rating) || 3), 0) / subjectRatings.length;
+        subjectRisk = ((5 - avgRating) / 4) * 100;
+    }
+
+    // Factor 2 — Mood (weight: 25%)
+    const moodVal = mood != null ? mood : 3;
+    const moodRisk = ((5 - moodVal) / 4) * 100;
+
+    // Factor 3 — Attendance (weight: 25%)
+    let attendanceRisk;
+    if (attendancePct == null) {
+        attendanceRisk = 30;
+    } else if (attendancePct >= 90) {
+        attendanceRisk = 0;
+    } else if (attendancePct >= 75) {
+        attendanceRisk = 20;
+    } else if (attendancePct >= 60) {
+        attendanceRisk = 55;
+    } else if (attendancePct >= 50) {
+        attendanceRisk = 75;
+    } else {
+        attendanceRisk = 100;
+    }
+
+    // Factor 4 — Weekly difficulty (weight: 15%)
+    const diff = weeklyDifficulty != null ? weeklyDifficulty : 5;
+    const diffRisk = ((diff - 1) / 9) * 100;
+
+    const raw = (subjectRisk * 0.35) + (moodRisk * 0.25) + (attendanceRisk * 0.25) + (diffRisk * 0.15);
+    return Math.min(100, Math.max(0, Math.round(raw)));
+}
+
+function riskScoreToLevel(score) {
+    if (score >= 80) return 'critical';
+    if (score >= 60) return 'high';
+    if (score >= 30) return 'medium';
+    return 'low';
+}
+
 function scanKeywords(text) {
     const lower = String(text || '').toLowerCase();
     const detected = [];
@@ -197,12 +242,25 @@ ${JSON.stringify({
     const summary = String(modelResult?.summary || fallback.summary).slice(0, 1800);
     const { detected, dangerCount, warningCount } = scanKeywords(text);
 
+    // Calculate numeric risk score using weighted formula
+    const riskScore = calculateRiskScore(
+        extras.subjectRatings || null,
+        extras.emotionalRating != null ? extras.emotionalRating : null,
+        extras.attendancePercentage != null ? extras.attendancePercentage : null,
+        extras.weeklyDifficulty != null ? extras.weeklyDifficulty : null
+    );
+    // Sync riskLevel to numeric score if score indicates higher risk
+    const calculatedLevel = riskScoreToLevel(riskScore);
+    if (consecutiveHighCount < 3) {
+        riskLevel = calculatedLevel;
+    }
+
     return {
         sentiment,
         sentimentScore: sentimentToScore(sentiment),
         summary,
         riskLevel,
-        riskScore: riskToScore(riskLevel),
+        riskScore,
         keyConcerns,
         confidence: modelResult ? 0.78 : fallback.confidence,
         promptVersion: modelResult?.promptVersion || fallback.promptVersion || PROMPT_VERSION,

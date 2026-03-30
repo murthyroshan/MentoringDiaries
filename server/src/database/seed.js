@@ -121,35 +121,77 @@ const insertAttendance = db.prepare(`
         (@department, @section, @roll_number, @week_number, @academic_year, @semester, @cumulative_pct, @weekly_pct)
 `);
 
+const semesterConfig = [
+    { semester: 1, academic_year: '2023-24', totalWeeks: 20 },
+    { semester: 2, academic_year: '2023-24', totalWeeks: 20 },
+    { semester: 3, academic_year: '2024-25', totalWeeks: 20 },
+    { semester: 4, academic_year: '2024-25', totalWeeks: 28 },
+];
+
 let attCount = 0;
+
+const insertAttendanceBatch = db.transaction((rows) => {
+    for (const row of rows) {
+        insertAttendance.run(row);
+        attCount++;
+    }
+});
+
 for (const [dept, sections] of Object.entries(deptSections)) {
     for (const section of sections) {
         for (let roll = 1; roll <= 10; roll++) {
-            const rand = seededRand(roll * 31 + section.charCodeAt(0) * 7 + dept.charCodeAt(0) * 3);
-            // Determine if this student is a "dip" student (10% per section)
-            const isDipStudent = roll === 5; // roll 5 gets a dip
-            let cumPct = 80 + rand() * 12; // start 80-92%
-            for (let week = 1; week <= 12; week++) {
-                // Dip students dip below 75% around week 6-8
-                let weekPct;
-                if (isDipStudent && week >= 6 && week <= 8) {
-                    weekPct = 50 + rand() * 15; // 50-65%
-                    cumPct = ((cumPct * (week - 1)) + weekPct) / week;
-                } else {
-                    weekPct = Math.max(40, Math.min(100, cumPct + (rand() * 30 - 15)));
-                    cumPct = ((cumPct * (week - 1)) + weekPct) / week;
+            const sectionCode = section.charCodeAt(0);
+            const baseRate = 75 + ((roll * 7 + sectionCode) % 20);
+
+            const dipWeeks = [
+                3 + (roll % 4),
+                9 + (roll % 5),
+                15 + (roll % 3),
+            ];
+            const riseWeeks = [
+                6 + (roll % 3),
+                13 + (roll % 4),
+            ];
+            const isLowStudent = roll % 10 === 0;
+
+            for (const { semester, academic_year, totalWeeks } of semesterConfig) {
+                const semBaseRate = semester === 1 ? baseRate * 0.92 : baseRate;
+                const weeklyPcts = [];
+                const rows = [];
+
+                for (let week = 1; week <= totalWeeks; week++) {
+                    let weeklyPct;
+
+                    if (isLowStudent && week >= 5 && week <= 8) {
+                        weeklyPct = 42;
+                    } else if (dipWeeks.includes(week)) {
+                        weeklyPct = Math.max(38, semBaseRate - 28);
+                    } else if (riseWeeks.includes(week)) {
+                        weeklyPct = Math.min(100, semBaseRate + 12);
+                    } else {
+                        const raw = semBaseRate + Math.sin(week * roll * 0.3) * 12;
+                        weeklyPct = Math.min(100, Math.max(45, raw));
+                    }
+
+                    weeklyPct = Math.round(weeklyPct * 10) / 10;
+                    weeklyPcts.push(weeklyPct);
+
+                    const cumSum = weeklyPcts.reduce((s, v) => s + v, 0);
+                    const cumPct = Math.round((cumSum / week) * 10) / 10;
+
+                    rows.push({
+                        department: dept,
+                        section,
+                        roll_number: roll,
+                        week_number: week,
+                        academic_year,
+                        semester,
+                        cumulative_pct: cumPct,
+                        weekly_pct: weeklyPct,
+                    });
                 }
-                insertAttendance.run({
-                    department: dept,
-                    section,
-                    roll_number: roll,
-                    week_number: week,
-                    academic_year: '2024-25',
-                    semester: 4,
-                    cumulative_pct: Math.round(cumPct * 10) / 10,
-                    weekly_pct: Math.round(weekPct * 10) / 10,
-                });
-                attCount++;
+
+                insertAttendanceBatch(rows);
             }
         }
     }
