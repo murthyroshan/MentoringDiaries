@@ -73,7 +73,7 @@ export default function AdminDashboard() {
 
     // Risk Distribution Chart
     const riskOrder = ['low', 'medium', 'high', 'critical']
-    const riskSorted = riskOrder.map(r => riskDist?.find(d => d._id === r) || { _id: r, count: 0 })
+    const riskSorted = riskOrder.map(r => ({ _id: r, count: riskDist?.[r] ?? 0 }))
     const riskChart = {
         labels: riskSorted.map(r => r._id?.charAt(0).toUpperCase() + r._id?.slice(1)),
         datasets: [{

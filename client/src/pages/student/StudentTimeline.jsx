@@ -62,28 +62,40 @@ const STATIC_ATTENDANCE = {
 
 const STATIC_RISK_ENTRIES = {
   1: [
-    { week_number: 2,  ai_risk_score: 22, ai_sentiment: 'positive', mood: 4 },
-    { week_number: 4,  ai_risk_score: 38, ai_sentiment: 'neutral',  mood: 3 },
-    { week_number: 6,  ai_risk_score: 55, ai_sentiment: 'negative', mood: 2 },
-    { week_number: 8,  ai_risk_score: 42, ai_sentiment: 'neutral',  mood: 3 },
-    { week_number: 10, ai_risk_score: 28, ai_sentiment: 'positive', mood: 4 },
-    { week_number: 12, ai_risk_score: 18, ai_sentiment: 'positive', mood: 5 },
+    { semester: 1, week_number: 1,  ai_risk_score: 20, ai_sentiment: 'positive', mood: 4 },
+    { semester: 1, week_number: 2,  ai_risk_score: 22, ai_sentiment: 'positive', mood: 4 },
+    { semester: 1, week_number: 3,  ai_risk_score: 32, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 1, week_number: 4,  ai_risk_score: 38, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 1, week_number: 6,  ai_risk_score: 55, ai_sentiment: 'negative', mood: 2 },
+    { semester: 1, week_number: 7,  ai_risk_score: 50, ai_sentiment: 'negative', mood: 2 },
+    { semester: 1, week_number: 8,  ai_risk_score: 42, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 1, week_number: 9,  ai_risk_score: 35, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 1, week_number: 10, ai_risk_score: 28, ai_sentiment: 'positive', mood: 4 },
+    { semester: 1, week_number: 12, ai_risk_score: 18, ai_sentiment: 'positive', mood: 5 },
   ],
   2: [
-    { week_number: 1,  ai_risk_score: 48, ai_sentiment: 'neutral',  mood: 3 },
-    { week_number: 3,  ai_risk_score: 62, ai_sentiment: 'negative', mood: 2 },
-    { week_number: 5,  ai_risk_score: 71, ai_sentiment: 'negative', mood: 2 },
-    { week_number: 7,  ai_risk_score: 55, ai_sentiment: 'neutral',  mood: 3 },
-    { week_number: 9,  ai_risk_score: 40, ai_sentiment: 'neutral',  mood: 3 },
-    { week_number: 11, ai_risk_score: 30, ai_sentiment: 'positive', mood: 4 },
+    { semester: 2, week_number: 1,  ai_risk_score: 48, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 2, week_number: 2,  ai_risk_score: 55, ai_sentiment: 'negative', mood: 2 },
+    { semester: 2, week_number: 3,  ai_risk_score: 62, ai_sentiment: 'negative', mood: 2 },
+    { semester: 2, week_number: 5,  ai_risk_score: 71, ai_sentiment: 'negative', mood: 2 },
+    { semester: 2, week_number: 6,  ai_risk_score: 65, ai_sentiment: 'negative', mood: 2 },
+    { semester: 2, week_number: 7,  ai_risk_score: 55, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 2, week_number: 9,  ai_risk_score: 40, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 2, week_number: 10, ai_risk_score: 35, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 2, week_number: 11, ai_risk_score: 30, ai_sentiment: 'positive', mood: 4 },
+    { semester: 2, week_number: 12, ai_risk_score: 22, ai_sentiment: 'positive', mood: 4 },
   ],
   3: [
-    { week_number: 2,  ai_risk_score: 30, ai_sentiment: 'positive', mood: 4 },
-    { week_number: 4,  ai_risk_score: 45, ai_sentiment: 'neutral',  mood: 3 },
-    { week_number: 6,  ai_risk_score: 68, ai_sentiment: 'negative', mood: 2 },
-    { week_number: 8,  ai_risk_score: 75, ai_sentiment: 'negative', mood: 1 },
-    { week_number: 10, ai_risk_score: 50, ai_sentiment: 'neutral',  mood: 3 },
-    { week_number: 12, ai_risk_score: 35, ai_sentiment: 'positive', mood: 4 },
+    { semester: 3, week_number: 1,  ai_risk_score: 25, ai_sentiment: 'positive', mood: 4 },
+    { semester: 3, week_number: 2,  ai_risk_score: 30, ai_sentiment: 'positive', mood: 4 },
+    { semester: 3, week_number: 3,  ai_risk_score: 38, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 3, week_number: 4,  ai_risk_score: 45, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 3, week_number: 6,  ai_risk_score: 68, ai_sentiment: 'negative', mood: 2 },
+    { semester: 3, week_number: 7,  ai_risk_score: 72, ai_sentiment: 'negative', mood: 1 },
+    { semester: 3, week_number: 8,  ai_risk_score: 75, ai_sentiment: 'negative', mood: 1 },
+    { semester: 3, week_number: 9,  ai_risk_score: 62, ai_sentiment: 'negative', mood: 2 },
+    { semester: 3, week_number: 10, ai_risk_score: 50, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 3, week_number: 12, ai_risk_score: 35, ai_sentiment: 'positive', mood: 4 },
   ],
 }
 
@@ -531,10 +543,15 @@ export default function StudentTimeline() {
 
   const [activeSemester, setActiveSemester] = useState(currentSemester)
 
-  // Use the academic year that the selected semester actually belongs to
+  // For the CURRENT semester, always use the real current academic year so we
+  // query the correctly-seeded data (2025-26, 13 weeks).
+  // For past semesters, derive from batch so their queries return nothing →
+  // static fallback kicks in automatically.
   const activeSemesterYear = useMemo(
-    () => getAcademicYearForSemester(activeSemester, user?.batch),
-    [activeSemester, user?.batch]
+    () => activeSemester === currentSemester
+      ? academicYear                                           // e.g. '2025-26'
+      : getAcademicYearForSemester(activeSemester, user?.batch), // e.g. '2024-25' for sem 3
+    [activeSemester, currentSemester, academicYear, user?.batch]
   )
 
   const { data: marksAllData, isLoading: marksLoading } = useQuery({
@@ -545,9 +562,11 @@ export default function StudentTimeline() {
   })
   const allMarks = useMemo(() => marksAllData?.data || [], [marksAllData])
   const availableSemesters = useMemo(() => {
-    const fromMarks = new Set(allMarks.map(m => m.semester))
-    fromMarks.add(currentSemester)
-    return [...fromMarks].sort((a, b) => a - b)
+    const semSet = new Set(allMarks.map(m => m.semester))
+    // Always include all semesters up to (and including) the current one
+    // so that past semesters with static data are always browsable
+    for (let s = 1; s <= currentSemester; s++) semSet.add(s)
+    return [...semSet].sort((a, b) => a - b)
   }, [allMarks, currentSemester])
 
   // Whether we're viewing a past (non-current) semester

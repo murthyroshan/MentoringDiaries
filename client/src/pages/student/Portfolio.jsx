@@ -13,6 +13,100 @@ import api from '../../services/api'
 
 ChartJS.register(LineController, LineElement, PointElement, CategoryScale, LinearScale, Tooltip)
 
+// ─── Static historical data (previous semesters) ─────────────────────────────
+// Mirrors StudentTimeline – used to populate semester summary cards when the
+// API returns no records for past semesters.
+const STATIC_ATTENDANCE = {
+  1: [
+    { week_number: 1,  weekly_pct: 100, cumulative_pct: 100 },
+    { week_number: 2,  weekly_pct: 90,  cumulative_pct: 95  },
+    { week_number: 3,  weekly_pct: 80,  cumulative_pct: 90  },
+    { week_number: 4,  weekly_pct: 70,  cumulative_pct: 85  },
+    { week_number: 5,  weekly_pct: 60,  cumulative_pct: 80  },
+    { week_number: 6,  weekly_pct: 85,  cumulative_pct: 81  },
+    { week_number: 7,  weekly_pct: 90,  cumulative_pct: 82  },
+    { week_number: 8,  weekly_pct: 95,  cumulative_pct: 84  },
+    { week_number: 9,  weekly_pct: 100, cumulative_pct: 86  },
+    { week_number: 10, weekly_pct: 80,  cumulative_pct: 85  },
+    { week_number: 11, weekly_pct: 75,  cumulative_pct: 84  },
+    { week_number: 12, weekly_pct: 70,  cumulative_pct: 82  },
+  ],
+  2: [
+    { week_number: 1,  weekly_pct: 80,  cumulative_pct: 80  },
+    { week_number: 2,  weekly_pct: 70,  cumulative_pct: 75  },
+    { week_number: 3,  weekly_pct: 65,  cumulative_pct: 72  },
+    { week_number: 4,  weekly_pct: 75,  cumulative_pct: 73  },
+    { week_number: 5,  weekly_pct: 80,  cumulative_pct: 74  },
+    { week_number: 6,  weekly_pct: 85,  cumulative_pct: 76  },
+    { week_number: 7,  weekly_pct: 90,  cumulative_pct: 78  },
+    { week_number: 8,  weekly_pct: 95,  cumulative_pct: 80  },
+    { week_number: 9,  weekly_pct: 85,  cumulative_pct: 81  },
+    { week_number: 10, weekly_pct: 70,  cumulative_pct: 79  },
+    { week_number: 11, weekly_pct: 60,  cumulative_pct: 76  },
+    { week_number: 12, weekly_pct: 75,  cumulative_pct: 76  },
+  ],
+  3: [
+    { week_number: 1,  weekly_pct: 90,  cumulative_pct: 90  },
+    { week_number: 2,  weekly_pct: 85,  cumulative_pct: 87  },
+    { week_number: 3,  weekly_pct: 95,  cumulative_pct: 90  },
+    { week_number: 4,  weekly_pct: 80,  cumulative_pct: 88  },
+    { week_number: 5,  weekly_pct: 75,  cumulative_pct: 85  },
+    { week_number: 6,  weekly_pct: 70,  cumulative_pct: 83  },
+    { week_number: 7,  weekly_pct: 65,  cumulative_pct: 80  },
+    { week_number: 8,  weekly_pct: 60,  cumulative_pct: 77  },
+    { week_number: 9,  weekly_pct: 70,  cumulative_pct: 76  },
+    { week_number: 10, weekly_pct: 80,  cumulative_pct: 77  },
+    { week_number: 11, weekly_pct: 85,  cumulative_pct: 78  },
+    { week_number: 12, weekly_pct: 90,  cumulative_pct: 79  },
+  ],
+}
+
+const STATIC_RISK_ENTRIES = {
+  1: [
+    { semester: 1, week_number: 2,  ai_risk_score: 22, ai_sentiment: 'positive', mood: 4 },
+    { semester: 1, week_number: 4,  ai_risk_score: 38, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 1, week_number: 6,  ai_risk_score: 55, ai_sentiment: 'negative', mood: 2 },
+    { semester: 1, week_number: 8,  ai_risk_score: 42, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 1, week_number: 10, ai_risk_score: 28, ai_sentiment: 'positive', mood: 4 },
+    { semester: 1, week_number: 12, ai_risk_score: 18, ai_sentiment: 'positive', mood: 5 },
+  ],
+  2: [
+    { semester: 2, week_number: 1,  ai_risk_score: 48, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 2, week_number: 3,  ai_risk_score: 62, ai_sentiment: 'negative', mood: 2 },
+    { semester: 2, week_number: 5,  ai_risk_score: 71, ai_sentiment: 'negative', mood: 2 },
+    { semester: 2, week_number: 7,  ai_risk_score: 55, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 2, week_number: 9,  ai_risk_score: 40, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 2, week_number: 11, ai_risk_score: 30, ai_sentiment: 'positive', mood: 4 },
+  ],
+  3: [
+    { semester: 3, week_number: 2,  ai_risk_score: 30, ai_sentiment: 'positive', mood: 4 },
+    { semester: 3, week_number: 4,  ai_risk_score: 45, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 3, week_number: 6,  ai_risk_score: 68, ai_sentiment: 'negative', mood: 2 },
+    { semester: 3, week_number: 8,  ai_risk_score: 75, ai_sentiment: 'negative', mood: 1 },
+    { semester: 3, week_number: 10, ai_risk_score: 50, ai_sentiment: 'neutral',  mood: 3 },
+    { semester: 3, week_number: 12, ai_risk_score: 35, ai_sentiment: 'positive', mood: 4 },
+  ],
+}
+
+const STATIC_ACHIEVEMENTS = {
+  1: [
+    { id: 'static-ach-1-1', semester: 1, type: 'event',       title: 'Orientation Day Participation',               description: 'Attended college orientation and department induction programme.',                  date: '2023-08-05', proof_url: '' },
+    { id: 'static-ach-1-2', semester: 1, type: 'course',      title: 'Python Programming — NPTEL',                  description: 'Completed 8-week NPTEL online course on Python programming. Scored 72%.',            date: '2023-10-20', proof_url: '' },
+    { id: 'static-ach-1-3', semester: 1, type: 'competition', title: 'Code Hunt — Inter-dept Quiz',                 description: 'Participated in department-level coding quiz. Reached semi-finals.',                  date: '2023-11-12', proof_url: '' },
+  ],
+  2: [
+    { id: 'static-ach-2-1', semester: 2, type: 'event',       title: 'TechExpo 2024 — Volunteer',                   description: 'Volunteered at the annual college TechExpo event. Managed stall coordination.',      date: '2024-01-18', proof_url: '' },
+    { id: 'static-ach-2-2', semester: 2, type: 'course',      title: 'Data Structures — Coursera',                  description: 'Completed Stanford-style DS course on Coursera with certificate.',                    date: '2024-03-05', proof_url: '' },
+    { id: 'static-ach-2-3', semester: 2, type: 'competition', title: 'Hackathon — Smart Campus Ideas',              description: 'Built a smart timetable scheduler prototype. Finished 3rd in department round.',      date: '2024-02-22', proof_url: '' },
+  ],
+  3: [
+    { id: 'static-ach-3-1', semester: 3, type: 'event',       title: 'IEEE Student Branch Workshop',                description: 'Attended hands-on IoT workshop organised by the IEEE student branch.',               date: '2024-08-30', proof_url: '' },
+    { id: 'static-ach-3-2', semester: 3, type: 'course',      title: 'SQL & Database Design — NPTEL',               description: 'Completed NPTEL DBMS course, scored 81% in final exam.',                             date: '2024-10-15', proof_url: '' },
+    { id: 'static-ach-3-3', semester: 3, type: 'competition', title: 'HackFest 2024 — Finalist',                   description: '24-hour inter-college hackathon. Built an e-waste tracking web app. Top 10 finish.', date: '2024-09-14', proof_url: '' },
+    { id: 'static-ach-3-4', semester: 3, type: 'other',       title: 'Department Newsletter Contributor',           description: 'Published an article on AI in healthcare in the department quarterly newsletter.',    date: '2024-11-01', proof_url: '' },
+  ],
+}
+
 // ─── Design tokens ─────────────────────────────────────────────────────────────
 const C = {
   border:  'rgba(255,255,255,0.06)',
@@ -269,9 +363,42 @@ export default function Portfolio() {
   })
 
   const allMarks = useMemo(() => marksData?.data || [], [marksData])
-  const allAchievements = useMemo(() => achievementsData?.data || [], [achievementsData])
-  const diaryEntries = useMemo(() => diaryData?.data || [], [diaryData])
+
+  // Merge live achievements with static fallback for past semesters
+  const liveAchievements = useMemo(() => achievementsData?.data || [], [achievementsData])
+  const allAchievements = useMemo(() => {
+    const staticPast = []
+    for (let s = 1; s < semester; s++) {
+      const live = liveAchievements.filter(a => a.semester === s)
+      if (live.length === 0 && STATIC_ACHIEVEMENTS[s]) {
+        staticPast.push(...STATIC_ACHIEVEMENTS[s])
+      }
+    }
+    return [...liveAchievements, ...staticPast]
+  }, [liveAchievements, semester])
+
+  // For current semester use live API data; for past semesters merge static fallback
+  const currentSemDiary = useMemo(() => diaryData?.data || [], [diaryData])
+  const diaryEntries = useMemo(() => {
+    // Flatten static entries for all past semesters (1 .. semester-1)
+    const staticPast = []
+    for (let s = 1; s < semester; s++) {
+      const live = currentSemDiary.filter(e => e.semester === s)
+      if (live.length === 0 && STATIC_RISK_ENTRIES[s]) {
+        staticPast.push(...STATIC_RISK_ENTRIES[s])
+      }
+    }
+    return [...currentSemDiary, ...staticPast]
+  }, [currentSemDiary, semester])
+
   const attendanceHistory = useMemo(() => attendanceData?.data || [], [attendanceData])
+
+  // Per-semester attendance lookup (current = live, past = static fallback)
+  const getAttendanceForSem = useMemo(() => (sem) => {
+    if (sem === semester) return attendanceHistory
+    const live = []
+    return live.length > 0 ? live : (STATIC_ATTENDANCE[sem] || [])
+  }, [attendanceHistory, semester])
 
   const activeMarksEntry = useMemo(() => allMarks.find(m => m.semester === marksTab) || null, [allMarks, marksTab])
 
@@ -358,7 +485,10 @@ export default function Portfolio() {
               <div style={{ fontSize: '13px', color: C.muted, display: 'flex', flexWrap: 'wrap', gap: '12px' }}>
                 <span>Semester {semester}</span>
                 {user?.email && <span>{user.email}</span>}
-                {user?.created_at && <span>Member since {formatMonthYear(user.created_at)}</span>}
+                {user?.batch && (() => {
+                  const startYear = user.batch.split('-')[0]
+                  return startYear ? <span>Enrolled August {startYear}</span> : null
+                })()}
               </div>
               {user?.mentor_id ? (
                 <div style={{ marginTop: '8px', fontSize: '12px', color: C.teal }}>✓ Mentor assigned</div>
@@ -518,7 +648,7 @@ export default function Portfolio() {
                   marksData={allMarks}
                   diaryEntries={diaryEntries}
                   achievements={allAchievements}
-                  attendanceHistory={sem === semester ? attendanceHistory : []}
+                  attendanceHistory={getAttendanceForSem(sem)}
                   isCurrent={sem === semester}
                 />
               ))}

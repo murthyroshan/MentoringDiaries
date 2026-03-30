@@ -15,8 +15,8 @@ export default function RiskMonitor() {
     })
 
     const entries = data?.data || []
-    const critical = entries.filter(e => e.aiAnalysis?.riskLevel === 'critical')
-    const high = entries.filter(e => e.aiAnalysis?.riskLevel === 'high')
+    const critical = entries.filter(e => e.ai_risk_level === 'critical')
+    const high = entries.filter(e => e.ai_risk_level === 'high')
 
     const handleExportFlagged = async () => {
         const res = await api.get('/analytics/export/flagged', { responseType: 'blob' })
@@ -79,10 +79,12 @@ export default function RiskMonitor() {
             ) : (
                 <div className="space-y-3">
                     {entries.map((e, i) => {
-                        const isCritical = e.aiAnalysis?.riskLevel === 'critical'
+                        const riskLevel = e.ai_risk_level
+                        const isCritical = riskLevel === 'critical'
+                        const createdAt = e.created_at ? new Date(e.created_at) : null
                         return (
                             <motion.div
-                                key={e._id}
+                                key={e.id}
                                 initial={{ opacity: 0, y: 10 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ delay: i * 0.04 }}
@@ -101,38 +103,40 @@ export default function RiskMonitor() {
                                             <div>
                                                 <p className="font-semibold text-sm" style={{ color: 'rgb(var(--text-primary))' }}>{e.student?.name}</p>
                                                 <p className="text-xs" style={{ color: 'rgb(var(--text-muted))' }}>
-                                                    {e.student?.department} · {e.student?.batch} · {e.student?.rollNumber}
+                                                    {e.student?.department} · {e.student?.batch} · Roll {e.student?.roll_number}
                                                 </p>
                                             </div>
                                         </div>
 
-                                        <p className="text-sm line-clamp-2 mb-3" style={{ color: 'rgb(var(--text-secondary))' }}>{e.content}</p>
+                                        <p className="text-sm line-clamp-2 mb-3" style={{ color: 'rgb(var(--text-secondary))' }}>{e.reflection}</p>
 
-                                        {e.aiAnalysis?.summary && (
+                                        {e.ai_summary && (
                                             <div className="p-3 rounded-lg mb-3" style={{ background: 'rgb(var(--bg-secondary))' }}>
                                                 <p className="text-xs font-medium mb-1" style={{ color: 'rgb(var(--text-muted))' }}>AI Summary</p>
-                                                <p className="text-xs" style={{ color: 'rgb(var(--text-secondary))' }}>{e.aiAnalysis.summary}</p>
+                                                <p className="text-xs" style={{ color: 'rgb(var(--text-secondary))' }}>{e.ai_summary}</p>
                                             </div>
                                         )}
 
                                         <div className="flex items-center gap-4 text-xs flex-wrap">
                                             <span style={{ color: 'rgb(var(--text-muted))' }}>
                                                 <Clock size={11} className="inline mr-1" />
-                                                {formatDistanceToNow(new Date(e.createdAt), { addSuffix: true })}
+                                                {createdAt && !isNaN(createdAt)
+                                                    ? formatDistanceToNow(createdAt, { addSuffix: true })
+                                                    : '—'}
                                             </span>
                                             <span style={{ color: 'rgb(var(--text-muted))' }}>
                                                 Mentor: {e.mentor?.name || 'Unassigned'}
                                             </span>
-                                            {e.mentorRespondedAt ? (
+                                            {e.mentor_responded_at ? (
                                                 <span style={{ color: 'rgb(34,197,94)' }}>✓ Mentor responded</span>
                                             ) : (
                                                 <span style={{ color: 'rgb(249,115,22)' }}>⚡ Awaiting mentor response</span>
                                             )}
                                         </div>
 
-                                        {e.aiAnalysis?.keywords?.filter(k => k.severity !== 'neutral').length > 0 && (
+                                        {Array.isArray(e.ai_flags) && e.ai_flags.filter(k => k.severity !== 'neutral').length > 0 && (
                                             <div className="flex gap-1 mt-2 flex-wrap">
-                                                {e.aiAnalysis.keywords.filter(k => k.severity !== 'neutral').map((k, ki) => (
+                                                {e.ai_flags.filter(k => k.severity !== 'neutral').map((k, ki) => (
                                                     <span key={ki} className="badge text-xs" style={{
                                                         background: k.severity === 'danger' ? 'rgba(239,68,68,0.12)' : 'rgba(249,115,22,0.12)',
                                                         color: k.severity === 'danger' ? 'rgb(239,68,68)' : 'rgb(249,115,22)',
@@ -147,10 +151,10 @@ export default function RiskMonitor() {
 
                                     <div className="flex flex-col items-end gap-2 shrink-0">
                                         <div className="flex gap-2 flex-wrap justify-end">
-                                            <SentimentChip sentiment={e.aiAnalysis?.sentiment} />
-                                            <RiskBadge level={e.aiAnalysis?.riskLevel} showScore score={e.aiAnalysis?.riskScore} />
+                                            <SentimentChip sentiment={e.ai_sentiment} />
+                                            <RiskBadge level={e.ai_risk_level} showScore score={e.ai_risk_score} />
                                         </div>
-                                        <Link to={`/admin/entries/${e._id}`} className="btn btn-secondary text-xs py-1.5 px-3">
+                                        <Link to={`/admin/entries/${e.id}`} className="btn btn-secondary text-xs py-1.5 px-3">
                                             View <ArrowRight size={12} />
                                         </Link>
                                     </div>

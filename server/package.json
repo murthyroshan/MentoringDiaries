@@ -7,7 +7,8 @@
     "start": "node index.js",
     "dev": "nodemon index.js",
     "test": "jest --runInBand",
-    "seed:admin": "node src/scripts/seedAdmin.js"
+    "seed:admin": "node src/scripts/seedAdmin.js",
+    "seed:attendance": "node src/scripts/seedAttendance.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
