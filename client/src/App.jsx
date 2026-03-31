@@ -9,6 +9,7 @@ import { useUIStore } from './store/uiStore'
 // Layout
 import DashboardLayout from './components/layout/DashboardLayout'
 import StudentLayout from './components/layout/StudentLayout'
+import AdminLayout from './components/layout/AdminLayout'
 
 // Public Pages
 import LandingPage from './pages/public/Landing'
@@ -37,6 +38,9 @@ import AdminDashboard from './pages/admin/AdminDashboard'
 import UserManagement from './pages/admin/UserManagement'
 import AllEntries from './pages/admin/AllEntries'
 import RiskMonitor from './pages/admin/RiskMonitor'
+import SectionReport from './pages/admin/SectionReport'
+import StudentReport from './pages/admin/StudentReport'
+import MentorManagement from './pages/admin/MentorManagement'
 import NotFoundPage from './pages/NotFoundPage'
 
 // UI
@@ -106,11 +110,15 @@ function AnimatedRoutes() {
         <Route path="/mentor" element={<Navigate to="/mentor/dashboard" replace />} />
 
         {/* Admin */}
-        <Route element={<ProtectedRoute allowedRoles={['admin']}><DashboardLayout /></ProtectedRoute>}>
+        <Route element={<ProtectedRoute allowedRoles={['admin']}><AdminLayout /></ProtectedRoute>}>
           <Route path="/admin/dashboard" element={<AdminDashboard />} />
           <Route path="/admin/users" element={<UserManagement />} />
           <Route path="/admin/entries" element={<AllEntries />} />
           <Route path="/admin/risk-monitor" element={<RiskMonitor />} />
+          <Route path="/admin/sections" element={<SectionReport />} />
+          <Route path="/admin/sections/:dept/:section" element={<SectionReport />} />
+          <Route path="/admin/students/:id" element={<StudentReport />} />
+          <Route path="/admin/mentors" element={<MentorManagement />} />
           <Route path="/admin/entries/:id" element={<EntryDetail />} />
         </Route>
         {/* Legacy /admin redirect */}

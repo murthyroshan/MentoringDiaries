@@ -17,6 +17,7 @@ const marksRoutes = require('./routes/marks');
 const achievementsRoutes = require('./routes/achievements');
 const sessionRoutes = require('./routes/sessions');
 const notificationRoutes = require('./routes/notifications');
+const adminRoutes = require('./routes/admin');
 const errorHandler = require('./middleware/errorHandler');
 const requestId = require('./middleware/requestId');
 const requestLogger = require('./middleware/requestLogger');
@@ -149,6 +150,7 @@ app.use('/api/marks',         marksRoutes);
 app.use('/api/achievements',  achievementsRoutes);
 app.use('/api/sessions',      sessionRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/admin',        adminRoutes);
 
 if (isProd) {
     const clientBuildPath = path.resolve(__dirname, '../public');
