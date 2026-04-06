@@ -10,6 +10,7 @@ import { useUIStore } from './store/uiStore'
 import DashboardLayout from './components/layout/DashboardLayout'
 import StudentLayout from './components/layout/StudentLayout'
 import AdminLayout from './components/layout/AdminLayout'
+import MentorLayout from './components/layout/MentorLayout'
 
 // Public Pages
 import LandingPage from './pages/public/Landing'
@@ -32,6 +33,10 @@ import MentorEntries from './pages/mentor/MentorEntries'
 import ReviewEntry from './pages/mentor/ReviewEntry'
 import FlaggedEntries from './pages/mentor/FlaggedEntries'
 import MentorSessions from './pages/mentor/MentorSessions'
+import PriorityQueue from './pages/mentor/PriorityQueue'
+import MyStudents from './pages/mentor/MyStudents'
+import StudentDetail from './pages/mentor/StudentDetail'
+import MentorAnalytics from './pages/mentor/MentorAnalytics'
 
 // Admin Pages
 import AdminDashboard from './pages/admin/AdminDashboard'
@@ -97,13 +102,16 @@ function AnimatedRoutes() {
         </Route>
 
         {/* Mentor */}
-        <Route element={<ProtectedRoute allowedRoles={['mentor']}><DashboardLayout /></ProtectedRoute>}>
+        <Route element={<ProtectedRoute allowedRoles={['mentor']}><MentorLayout /></ProtectedRoute>}>
           <Route path="/mentor/dashboard" element={<MentorDashboard />} />
-          <Route path="/mentor/students" element={<StudentsList />} />
+          <Route path="/mentor/queue" element={<PriorityQueue />} />
+          <Route path="/mentor/students" element={<MyStudents />} />
+          <Route path="/mentor/students/:id" element={<StudentDetail />} />
           <Route path="/mentor/sessions" element={<MentorSessions />} />
           <Route path="/mentor/entries" element={<MentorEntries />} />
-          <Route path="/mentor/entries/:id/review" element={<ReviewEntry />} />
+          <Route path="/mentor/review/:entryId" element={<ReviewEntry />} />
           <Route path="/mentor/flagged" element={<FlaggedEntries />} />
+          <Route path="/mentor/analytics" element={<MentorAnalytics />} />
           <Route path="/mentor/entries/:id" element={<EntryDetail />} />
         </Route>
         {/* Legacy /mentor redirect */}

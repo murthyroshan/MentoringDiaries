@@ -352,7 +352,7 @@ function StatItem({ to, prefix = '', suffix = '', label, skip }) {
 }
 
 // ── Final CTA countdown ───────────────────────────────────────────────────────
-function FinalCTAContent({ skip }) {
+function FinalCTAContent({ skip, dashboardPath, isAuthenticated }) {
   // Lazy initializer: skip → jump straight to final state, no setState in effect
   const [phase, setPhase] = useState(() => skip ? 4 : 0)
   const ref = useRef(null)
@@ -957,7 +957,7 @@ export default function Landing() {
           background:'radial-gradient(circle, rgba(232,184,75,0.05) 0%, transparent 70%)',
           pointerEvents:'none', zIndex:1,
         }} />
-        <FinalCTAContent skip={skip} />
+        <FinalCTAContent skip={skip} dashboardPath={dashboardPath} isAuthenticated={isAuthenticated} />
       </section>
 
       {/* ════════════════════════════════════════════════════════════════════
