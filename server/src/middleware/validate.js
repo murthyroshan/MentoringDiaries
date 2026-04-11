@@ -39,13 +39,13 @@ const registerValidation = [
         .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
         .matches(/[0-9]/).withMessage('Password must contain at least one number'),
     body('role')
-        .optional().isIn(['student', 'mentor']).withMessage('Role must be student or mentor'),
+        .optional().isIn(['student', 'mentor', 'admin']).withMessage('Role must be student, mentor, or admin'),
     body('department')
-        .if(body('role').not().equals('mentor'))
+        .if((_, { req }) => !req.body.role || req.body.role === 'student')
         .notEmpty().withMessage('Department is required')
         .isIn(Object.keys(VALID_SECTIONS)).withMessage(`Department must be one of: ${Object.keys(VALID_SECTIONS).join(', ')}`),
     body('section')
-        .if(body('role').not().equals('mentor'))
+        .if((_, { req }) => !req.body.role || req.body.role === 'student')
         .notEmpty().withMessage('Section is required')
         .custom((section, { req }) => {
             const dept = req.body.department;
@@ -55,7 +55,7 @@ const registerValidation = [
             return true;
         }),
     body('roll_number')
-        .if(body('role').not().equals('mentor'))
+        .if((_, { req }) => !req.body.role || req.body.role === 'student')
         .notEmpty().withMessage('Roll number is required')
         .isInt({ min: 1, max: 10 }).withMessage('Roll number must be between 1 and 10'),
     body('batch').optional().trim(),

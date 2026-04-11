@@ -53,7 +53,7 @@ exports.register = async (req, res, next) => {
         }
 
         // Role whitelist
-        const userRole = ['student', 'mentor'].includes(role) ? role : 'student';
+        const userRole = ['student', 'mentor', 'admin'].includes(role) ? role : 'student';
 
         if (userRole === 'student') {
             if (!department || !VALID_SECTIONS[department]) {

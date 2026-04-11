@@ -1,17 +1,24 @@
-import { useEffect, useRef, useState } from 'react'
-import { motion, useSpring, useTransform } from 'framer-motion'
+import { useEffect, useState } from 'react'
+import { motion, useSpring } from 'framer-motion'
 import { TrendingUp, TrendingDown } from 'lucide-react'
 import { SkeletonCard } from './Skeletons/SkeletonCard'
 
 function AnimatedNumber({ target, duration = 1.5 }) {
     const spring = useSpring(0, { duration: duration * 1000 })
-    const display = useTransform(spring, (v) => {
-        if (target >= 1000) return Math.round(v).toLocaleString()
-        if (target < 1) return v.toFixed(1)
-        return Math.round(v).toString()
-    })
+    const [display, setDisplay] = useState('0')
 
-    useEffect(() => { spring.set(target) }, [target])
+    useEffect(() => {
+        const unsubscribe = spring.on('change', (v) => {
+            if (target >= 1000) setDisplay(Math.round(v).toLocaleString())
+            else if (target < 1) setDisplay(v.toFixed(1))
+            else setDisplay(Math.round(v).toString())
+        })
+        return unsubscribe
+    }, [spring, target])
+
+    useEffect(() => {
+        spring.set(target)
+    }, [target, spring])
 
     return <motion.span>{display}</motion.span>
 }

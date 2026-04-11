@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { motion, useReducedMotion, useSpring, useTransform } from 'framer-motion'
+import { motion, useReducedMotion, useSpring } from 'framer-motion'
 import {
   Chart as ChartJS,
   BarController,
@@ -126,11 +126,18 @@ const SkeletonBox = ({ h = 20, w = '100%', r = 8 }) => (
 // ─── Animated Number (Framer Motion spring) ───────────────────────────────────
 function AnimatedNumber({ value, fontSize = '42px', color = C.text, suffix = '' }) {
   const spring = useSpring(0, { stiffness: 55, damping: 18 })
-  const display = useTransform(spring, v => Math.round(v).toString())
+  const [display, setDisplay] = useState('0')
+
+  useEffect(() => {
+    const unsubscribe = spring.on('change', (v) => {
+      setDisplay(Math.round(v).toString())
+    })
+    return unsubscribe
+  }, [spring])
 
   useEffect(() => {
     if (value != null) spring.set(value)
-  }, [value]) // eslint-disable-line
+  }, [value, spring])
 
   return (
     <motion.span style={{ fontSize, fontWeight: 900, color, lineHeight: 1 }}>
