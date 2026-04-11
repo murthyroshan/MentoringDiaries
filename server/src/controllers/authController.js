@@ -46,11 +46,7 @@ exports.register = async (req, res, next) => {
     try {
         const { name, email, password, role, department, section, roll_number, batch } = req.body;
 
-        // Email domain check
         const normEmail = (email || '').trim().toLowerCase();
-        if (!normEmail.endsWith('@gcet.edu.in')) {
-            return res.status(400).json({ success: false, message: 'Only @gcet.edu.in email addresses are allowed.' });
-        }
 
         // Role whitelist
         const userRole = ['student', 'mentor', 'admin'].includes(role) ? role : 'student';
@@ -63,8 +59,8 @@ exports.register = async (req, res, next) => {
                 return res.status(400).json({ success: false, message: `Section must be one of: ${VALID_SECTIONS[department].join(', ')} for department ${department}.` });
             }
             const roll = Number(roll_number);
-            if (!roll || roll < 1 || roll > 10 || !Number.isInteger(roll)) {
-                return res.status(400).json({ success: false, message: 'Roll number must be an integer between 1 and 10.' });
+            if (!roll || roll < 1 || roll > 20 || !Number.isInteger(roll)) {
+                return res.status(400).json({ success: false, message: 'Roll number must be an integer between 1 and 20.' });
             }
         }
 

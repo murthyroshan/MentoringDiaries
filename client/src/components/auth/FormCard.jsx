@@ -14,6 +14,7 @@ const CARD_STYLE = {
   maxHeight:         '92vh',
   overflowY:         'auto',
   overflowX:         'hidden',
+  pointerEvents:     'auto',
   background:        'rgba(11,11,17,0.85)',
   backdropFilter:    'blur(40px) saturate(160%)',
   WebkitBackdropFilter: 'blur(40px) saturate(160%)',

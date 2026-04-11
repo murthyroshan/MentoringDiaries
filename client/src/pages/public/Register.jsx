@@ -26,7 +26,10 @@ const DEPT_SECTIONS = {
 const schema = z.object({
   name:        z.string().min(2, 'Full name must be at least 2 characters'),
   email:       z.string().min(1, 'Email is required').email('Please enter a valid email address'),
-  password:    z.string().min(8, 'Password must be at least 8 characters'),
+  password:    z.string()
+    .min(8, 'Password must be at least 8 characters')
+    .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
+    .regex(/[0-9]/, 'Password must contain at least one number'),
   institution: z.string().min(2, 'Institution name is required'),
   phone:       z.string().optional(),
   year:        z.string().optional(),
@@ -44,8 +47,8 @@ const schema = z.object({
       ctx.addIssue({ path: ['section'], code: z.ZodIssueCode.custom, message: 'Section is required for students' })
     }
     const roll = Number(data.roll_number)
-    if (!roll || roll < 1 || roll > 10 || !Number.isInteger(roll)) {
-      ctx.addIssue({ path: ['roll_number'], code: z.ZodIssueCode.custom, message: 'Roll number must be 1–10' })
+    if (!roll || roll < 1 || roll > 20 || !Number.isInteger(roll)) {
+      ctx.addIssue({ path: ['roll_number'], code: z.ZodIssueCode.custom, message: 'Roll number must be 1–20' })
     }
   }
 })
@@ -477,7 +480,9 @@ export default function Register() {
       setTimeout(() => navigateByRole(user.role), 900)
     } catch (err) {
       setBtnState('idle')
-      setToastMsg(err?.response?.data?.message || 'Something went wrong. Please try again.')
+      const details = err?.response?.data?.details
+      const firstDetail = Array.isArray(details) && details.length > 0 ? details[0]?.message : ''
+      setToastMsg(firstDetail || err?.response?.data?.message || 'Something went wrong. Please try again.')
     }
   }
 
@@ -735,7 +740,7 @@ export default function Register() {
                             {/* Roll Number */}
                             <div>
                               <label style={{ display:'block', fontSize:'12px', color:'rgba(242,240,232,0.5)', marginBottom:'6px' }}>
-                                Roll Number (1–10) <span style={{ color:'#EF4444' }}>*</span>
+                                Roll Number (1–20) <span style={{ color:'#EF4444' }}>*</span>
                               </label>
                               <input
                                 type="number"

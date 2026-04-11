@@ -27,13 +27,7 @@ const registerValidation = [
         .isLength({ max: 100 }).withMessage('Name too long'),
     body('email')
         .trim().isEmail().withMessage('Valid email is required')
-        .normalizeEmail()
-        .custom((email) => {
-            if (!email.endsWith('@gcet.edu.in')) {
-                throw new Error('Only @gcet.edu.in email addresses are allowed');
-            }
-            return true;
-        }),
+        .normalizeEmail(),
     body('password')
         .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
         .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
@@ -57,7 +51,7 @@ const registerValidation = [
     body('roll_number')
         .if((_, { req }) => !req.body.role || req.body.role === 'student')
         .notEmpty().withMessage('Roll number is required')
-        .isInt({ min: 1, max: 10 }).withMessage('Roll number must be between 1 and 10'),
+        .isInt({ min: 1, max: 20 }).withMessage('Roll number must be between 1 and 20'),
     body('batch').optional().trim(),
     validate,
 ];
@@ -114,7 +108,7 @@ const updateUserValidation = [
     body('name').optional().trim().notEmpty().withMessage('Name cannot be empty'),
     body('department').optional().trim(),
     body('batch').optional().trim(),
-    body('roll_number').optional().isInt({ min: 1, max: 10 }).withMessage('Roll number must be 1-10'),
+    body('roll_number').optional().isInt({ min: 1, max: 20 }).withMessage('Roll number must be 1-20'),
     validate,
 ];
 
