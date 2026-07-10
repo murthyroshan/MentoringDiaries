@@ -11,11 +11,14 @@ const {
     getOverview,
     getBatches,
     getRiskAlerts,
+    createUser,
 } = require('../controllers/adminController');
+const { registerValidation } = require('../middleware/validate');
 
 // All admin routes require authentication + admin role
 router.use(auth, requireRole('admin'));
 
+router.post('/users',                                registerValidation, createUser);
 router.get('/overview',                              getOverview);
 router.get('/batches',                               getBatches);
 router.get('/sections',                              getSections);

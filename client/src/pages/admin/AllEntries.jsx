@@ -119,14 +119,22 @@ export default function AllEntries() {
   const rawEntries = data?.data || []
   const pagination = data?.pagination || { total: 0, pages: 1, page: 1 }
 
-  // Fallback client filter for riskLevel if backend doesn't handle it
+  // Fallback client-side filters in case the backend ignores these params, so the
+  // risk pills and search box actually filter the fetched entries.
   const entries = useMemo(() => {
     let list = rawEntries
     if (riskFilter) {
       list = list.filter(e => (e.ai_risk_level || riskLevelFromScore(e.ai_risk_score)) === riskFilter)
     }
+    if (search) {
+      const q = search.toLowerCase()
+      list = list.filter(e =>
+        (e.student?.name || '').toLowerCase().includes(q) ||
+        String(e.student?.roll_number ?? '').toLowerCase().includes(q)
+      )
+    }
     return list
-  }, [rawEntries, riskFilter])
+  }, [rawEntries, riskFilter, search])
 
   const thStyle = { padding: '8px 12px', textAlign: 'left', fontSize: '10px', color: C.muted, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: `1px solid ${C.border}`, background: 'none', border: 'none' }
 
@@ -239,7 +247,7 @@ export default function AllEntries() {
                             }}>{getInitials(e.student?.name || '?')}</div>
                             <div>
                               <div style={{ color: C.text, fontWeight: 500 }}>{e.student?.name || 'Unknown'}</div>
-                              <div style={{ fontSize: '11px', color: C.muted }}>Role {e.student?.roll_number}</div>
+                              <div style={{ fontSize: '11px', color: C.muted }}>Roll {e.student?.roll_number}</div>
                             </div>
                           </div>
                         </td>

@@ -11,6 +11,15 @@ import { useAuthStore } from '../store/authStore'
 
 const moodEmoji = { 1: '😢', 2: '😟', 3: '😐', 4: '😊', 5: '😄' }
 
+// The API returns snake_case date strings (or null). date-fns format() throws a
+// RangeError on an Invalid Date, which white-screened this page. Guard every date
+// so a missing/invalid value renders a safe fallback instead of crashing.
+function safeFormat(value, pattern, fallback = '—') {
+    if (!value) return fallback
+    const d = new Date(value)
+    return isNaN(d.getTime()) ? fallback : format(d, pattern)
+}
+
 export default function EntryDetail() {
     const { id } = useParams()
     const { user } = useAuthStore()
@@ -48,12 +57,12 @@ export default function EntryDetail() {
                 </Link>
                 <div className="flex-1">
                     <h2 className="text-xl font-bold" style={{ color: 'rgb(var(--text-primary))' }}>
-                        Week {entry.week} — {entry.academicYear}
+                        Week {entry.week_number} — {entry.academic_year}
                     </h2>
                     <div className="flex items-center gap-2 mt-1 flex-wrap">
                         <span className="text-xs" style={{ color: 'rgb(var(--text-muted))' }}>
                             <Calendar size={11} className="inline mr-1" />
-                            {format(new Date(entry.createdAt), 'MMMM d, yyyy')}
+                            {safeFormat(entry.created_at, 'MMMM d, yyyy')}
                         </span>
                         {user?.role !== 'student' && entry.student && (
                             <span className="text-xs" style={{ color: 'rgb(var(--text-muted))' }}>
@@ -63,8 +72,8 @@ export default function EntryDetail() {
                     </div>
                 </div>
                 <div className="flex gap-2 flex-wrap">
-                    <SentimentChip sentiment={entry.aiAnalysis?.sentiment} />
-                    <RiskBadge level={entry.aiAnalysis?.riskLevel} showScore score={entry.aiAnalysis?.riskScore} />
+                    <SentimentChip sentiment={entry.ai_sentiment} />
+                    <RiskBadge level={entry.ai_risk_level} showScore score={entry.ai_risk_score} />
                 </div>
             </div>
 
@@ -77,10 +86,10 @@ export default function EntryDetail() {
                             <p className="text-2xl">{moodEmoji[entry.mood] || '😐'}</p>
                             <p className="text-xs mt-1" style={{ color: 'rgb(var(--text-muted))' }}>Mood</p>
                         </div>
-                        {entry.attendancePercentage != null && (
+                        {entry.attendance_pct != null && (
                             <div className="glass-card p-4 text-center">
-                                <p className="text-xl font-bold" style={{ color: entry.attendancePercentage < 75 ? 'rgb(239,68,68)' : 'rgb(34,197,94)' }}>
-                                    {entry.attendancePercentage}%
+                                <p className="text-xl font-bold" style={{ color: entry.attendance_pct < 75 ? 'rgb(239,68,68)' : 'rgb(34,197,94)' }}>
+                                    {entry.attendance_pct}%
                                 </p>
                                 <p className="text-xs mt-1" style={{ color: 'rgb(var(--text-muted))' }}>Attendance</p>
                             </div>
@@ -100,10 +109,10 @@ export default function EntryDetail() {
 
                     {/* Content Sections */}
                     {[
-                        { label: 'Main Entry', content: entry.content, icon: BookOpen },
-                        { label: 'Academic Performance', content: entry.academicPerformance, icon: Target },
+                        // Map to the real API fields (reflection/challenges). MongoDB-era
+                        // fields academicPerformance/goals no longer exist in the backend.
+                        { label: 'Main Entry', content: entry.reflection, icon: BookOpen },
                         { label: 'Challenges Faced', content: entry.challenges, icon: AlertCircle },
-                        { label: 'Goals for Next Week', content: entry.goals, icon: Target },
                     ].filter(s => s.content).map((section, i) => (
                         <motion.div
                             key={i}
@@ -123,7 +132,7 @@ export default function EntryDetail() {
                     ))}
 
                     {/* Mentor Response */}
-                    {entry.mentorResponse ? (
+                    {entry.mentor_response ? (
                         <motion.div
                             initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                             className="glass-card p-5"
@@ -133,21 +142,21 @@ export default function EntryDetail() {
                                 <User size={15} style={{ color: 'rgb(34,197,94)' }} />
                                 <h4 className="text-sm font-semibold" style={{ color: 'rgb(34,197,94)' }}>
                                     Mentor Response
-                                    {entry.mentorRespondedAt && (
+                                    {entry.mentor_responded_at && (
                                         <span className="ml-2 text-xs font-normal" style={{ color: 'rgb(var(--text-muted))' }}>
-                                            · {format(new Date(entry.mentorRespondedAt), 'MMM d, HH:mm')}
+                                            · {safeFormat(entry.mentor_responded_at, 'MMM d, HH:mm')}
                                         </span>
                                     )}
                                 </h4>
                             </div>
-                            <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--text-primary))' }}>{entry.mentorResponse}</p>
+                            <p className="text-sm leading-relaxed" style={{ color: 'rgb(var(--text-primary))' }}>{entry.mentor_response}</p>
                         </motion.div>
                     ) : (
                         user?.role !== 'student' && (
                             <div className="glass-card p-5 text-center" style={{ border: '1px dashed rgb(var(--border-color))' }}>
                                 <p className="text-sm" style={{ color: 'rgb(var(--text-muted))' }}>No mentor response yet.</p>
                                 {user?.role === 'mentor' && (
-                                    <Link to={`/mentor/entries/${entry._id}/review`} className="btn btn-primary mt-3 text-sm">
+                                    <Link to={`/mentor/entries/${entry.id}/review`} className="btn btn-primary mt-3 text-sm">
                                         Add Response
                                     </Link>
                                 )}
@@ -156,7 +165,7 @@ export default function EntryDetail() {
                     )}
 
                     {/* File Attachment */}
-                    {entry.attachmentUrl && (
+                    {entry.attachment_url && (
                         <motion.div
                             initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                             className="glass-card p-5"
@@ -165,10 +174,10 @@ export default function EntryDetail() {
                                 <Paperclip size={16} style={{ color: 'rgb(99,102,241)' }} />
                                 <div className="flex-1">
                                     <p className="text-sm font-medium" style={{ color: 'rgb(var(--text-primary))' }}>Attachment</p>
-                                    <p className="text-xs" style={{ color: 'rgb(var(--text-muted))' }}>{entry.attachmentName || 'File'}</p>
+                                    <p className="text-xs" style={{ color: 'rgb(var(--text-muted))' }}>{entry.attachment_name || 'File'}</p>
                                 </div>
                                 <a
-                                    href={entry.attachmentUrl}
+                                    href={entry.attachment_url}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="btn btn-secondary text-xs py-1 px-3"
@@ -182,7 +191,16 @@ export default function EntryDetail() {
 
                 {/* AI Analysis Sidebar */}
                 <div className="space-y-4">
-                    <AIAnalysisPanel analysis={entry.aiAnalysis} />
+                    {/* Adapt the flat snake_case API fields to the camelCase shape
+                        AIAnalysisPanel expects (the old nested aiAnalysis object is gone). */}
+                    <AIAnalysisPanel analysis={{
+                        sentiment: entry.ai_sentiment,
+                        riskScore: entry.ai_risk_score,
+                        riskLevel: entry.ai_risk_level,
+                        summary: entry.ai_summary,
+                        keyConcerns: entry.ai_key_concerns,
+                        flagged: entry.is_flagged,
+                    }} />
                 </div>
             </div>
         </div>

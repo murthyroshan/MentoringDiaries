@@ -106,7 +106,9 @@ function RiskDots({ students }) {
   const dots = []
   const levels = ['critical', 'high', 'medium', 'low']
   for (const lvl of levels) {
-    const n = Math.max(1, Math.round((counts[lvl] / total) * MAX_DOTS)) 
+    // Only floor to at least 1 dot when the level actually has students; a level
+    // with count 0 must yield 0 dots (previously it always showed a phantom dot).
+    const n = counts[lvl] > 0 ? Math.max(1, Math.round((counts[lvl] / total) * MAX_DOTS)) : 0
     for (let i = 0; i < n && dots.length < MAX_DOTS; i++) {
       dots.push(riskColor(lvl))
     }

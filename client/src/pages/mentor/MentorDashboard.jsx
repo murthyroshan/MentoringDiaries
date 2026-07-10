@@ -539,7 +539,11 @@ export default function MentorDashboard() {
                 </span>
                 <span style={{ fontSize: '16px', color: C.muted }}> days</span>
                 <div style={{ fontSize: '11px', color: C.muted, marginTop: '6px' }}>
-                  {stats.avg_response_time_days < 2 ? 'Excellent' : stats.avg_response_time_days <= 5 ? 'Good' : 'Needs improvement'}
+                  {/* Guard the no-data case (null/undefined/0) so we don't label an empty
+                      metric "Excellent" (null < 2 is truthy in JS). */}
+                  {!stats.avg_response_time_days ? 'No data'
+                    : stats.avg_response_time_days < 2 ? 'Excellent'
+                    : stats.avg_response_time_days <= 5 ? 'Good' : 'Needs improvement'}
                 </div>
                 <div style={{ fontSize: '10px', color: C.subtle, marginTop: '4px' }}>
                   Platform avg: {(stats.platform_avg_response_time_days || 0).toFixed(1)} days

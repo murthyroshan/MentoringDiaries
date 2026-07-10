@@ -42,7 +42,8 @@ export default function StudentsList() {
                         </thead>
                         <tbody>
                             {students.map((s, i) => (
-                                <motion.tr key={s._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.04 }}>
+                                // API uses SQL-style ids/fields (id, roll_number), not Mongo (_id, rollNumber)
+                                <motion.tr key={s.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.04 }}>
                                     <td>
                                         <div className="flex items-center gap-3">
                                             <div className="w-8 h-8 rounded-full gradient-brand flex items-center justify-center text-white text-xs font-bold shrink-0">
@@ -55,9 +56,9 @@ export default function StudentsList() {
                                         </div>
                                     </td>
                                     <td style={{ color: 'rgb(var(--text-secondary))' }}>{s.department} · {s.batch}</td>
-                                    <td style={{ color: 'rgb(var(--text-muted))' }}>{s.rollNumber || '—'}</td>
+                                    <td style={{ color: 'rgb(var(--text-muted))' }}>{s.roll_number ?? '—'}</td>
                                     <td>
-                                        <Link to={`/mentor/entries?studentId=${s._id}`} className="btn btn-secondary text-xs py-1 px-3">View Entries</Link>
+                                        <Link to={`/mentor/entries?studentId=${s.id}`} className="btn btn-secondary text-xs py-1 px-3">View Entries</Link>
                                     </td>
                                 </motion.tr>
                             ))}

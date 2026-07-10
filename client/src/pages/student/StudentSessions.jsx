@@ -168,8 +168,9 @@ function UpcomingSession({ session }) {
 function TimelineNode({ session, index }) {
   const [notesExpanded, setNotesExpanded] = useState(false)
   const statusColor = session.status === 'completed' ? C.teal : C.red
+  // The API already returns action_items as a parsed array; JSON.parse on it would throw.
   const actionItems = useMemo(() => {
-    try { return JSON.parse(session.action_items || '[]') } catch { return [] }
+    return Array.isArray(session.action_items) ? session.action_items : []
   }, [session.action_items])
 
   const notesLong = (session.notes || '').length > 200
@@ -302,10 +303,9 @@ export default function StudentSessions() {
   const allActionItems = useMemo(() => {
     const items = []
     past.forEach(s => {
-      try {
-        const parsed = JSON.parse(s.action_items || '[]')
-        parsed.forEach(item => items.push({ item, sessionDate: s.scheduled_at }))
-      } catch {}
+      // action_items is already a parsed array from the API — use it directly.
+      const parsed = Array.isArray(s.action_items) ? s.action_items : []
+      parsed.forEach(item => items.push({ item, sessionDate: s.scheduled_at }))
     })
     return items
   }, [past])

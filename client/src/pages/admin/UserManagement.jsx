@@ -94,7 +94,9 @@ function UserModal({ user, onClose, onSuccess }) {
   const mutation = useMutation({
     mutationFn: (data) => isEdit
       ? api.patch(`/users/${user.id}`, data)
-      : api.post('/auth/register', data),
+      // Use the admin-only create endpoint — /auth/register would set auth
+      // cookies and silently log the admin in as the newly-created user.
+      : api.post('/admin/users', data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin-users'] })
       onSuccess()
@@ -143,7 +145,7 @@ function UserModal({ user, onClose, onSuccess }) {
             {!isEdit && (
               <div style={{ gridColumn: '1/-1' }}>
                 <label style={labelStyle}>Password *</label>
-                <input value={form.password} onChange={e => set('password', e.target.value)} style={inputStyle} placeholder="Min 8 chars" type="password" />
+                <input value={form.password} onChange={e => set('password', e.target.value)} style={inputStyle} placeholder="Min 8 chars, 1 uppercase, 1 number" type="password" />
               </div>
             )}
             <div>
@@ -170,7 +172,7 @@ function UserModal({ user, onClose, onSuccess }) {
                 </div>
                 <div>
                   <label style={labelStyle}>Roll number</label>
-                  <input value={form.roll_number} onChange={e => set('roll_number', e.target.value)} style={inputStyle} placeholder="240001" type="number" />
+                  <input value={form.roll_number} onChange={e => set('roll_number', e.target.value)} style={inputStyle} placeholder="1-20" type="number" min={1} max={20} />
                 </div>
                 <div>
                   <label style={labelStyle}>Batch</label>

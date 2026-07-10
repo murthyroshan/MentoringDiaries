@@ -230,7 +230,8 @@ export default function MyStudents() {
 
   const students = useMemo(() => {
     let list = data?.data || []
-    if (search) list = list.filter(s => s.name.toLowerCase().includes(search.toLowerCase()) || s.roll_number?.toLowerCase().includes(search.toLowerCase()))
+    // roll_number is an integer from the API; String() before toLowerCase() to avoid a crash
+    if (search) list = list.filter(s => s.name.toLowerCase().includes(search.toLowerCase()) || String(s.roll_number ?? '').toLowerCase().includes(search.toLowerCase()))
     if (filter === 'flagged') list = list.filter(s => s.health?.is_flagged)
     if (filter === 'low_att') list = list.filter(s => s.health?.below_75_attendance)
     if (filter === 'no_entry') list = list.filter(s => s.health?.missed_this_week)

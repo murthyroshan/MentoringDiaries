@@ -1,3 +1,4 @@
+const bcrypt = require('bcryptjs');
 const db = require('../database/db');
 const queries = require('../database/queries');
 
@@ -21,6 +22,45 @@ function riskLevelFromScore(score) {
     if (score < 80) return 'high';
     return 'critical';
 }
+
+// ─── POST /api/admin/users ────────────────────────────────────────────────────
+// Admin-only user creation. Unlike /auth/register this does NOT issue or set any
+// auth cookies, so an admin adding a student keeps their own admin session
+// instead of being silently logged in as the new user.
+exports.createUser = async (req, res, next) => {
+    try {
+        const { name, email, password, role, department, section, roll_number, batch } = req.body;
+        const normEmail = (email || '').trim().toLowerCase();
+        const userRole = ['student', 'mentor', 'admin'].includes(role) ? role : 'student';
+
+        if (queries.findUserByEmail(normEmail)) {
+            return res.status(409).json({ success: false, message: 'Email already registered.' });
+        }
+
+        const passwordHash = await bcrypt.hash(password, 12);
+        const isStudent = userRole === 'student';
+
+        const result = db.prepare(`
+            INSERT INTO users (email, password_hash, name, role, department, section, roll_number, batch, current_semester, is_active)
+            VALUES (@email, @password_hash, @name, @role, @department, @section, @roll_number, @batch, @current_semester, 1)
+        `).run({
+            email: normEmail,
+            password_hash: passwordHash,
+            name: (name || '').trim(),
+            role: userRole,
+            department: department || null,
+            section: section || null,
+            roll_number: isStudent ? Number(roll_number) : null,
+            batch: batch || null,
+            current_semester: isStudent ? 1 : null,
+        });
+
+        const user = queries.findUserById(result.lastInsertRowid);
+        return res.status(201).json({ success: true, message: 'User created', data: safeUser(user) });
+    } catch (error) {
+        next(error);
+    }
+};
 
 // ─── 1. GET /api/admin/sections ───────────────────────────────────────────────
 exports.getSections = (req, res, next) => {

@@ -545,12 +545,15 @@ export default function AdminDashboard() {
     },
   }
 
-  // Dept risk bar chart
+  // Dept risk bar chart.
+  // No per-department risk source is fetched here (the overview endpoint is aggregate
+  // only), so render deterministic zeros instead of Math.random() placeholder data
+  // that changed on every render.
   const deptBarData = useMemo(() => ({
     labels: DEPT_KEYS,
     datasets: [{
       label: 'Avg Risk Score',
-      data: DEPT_KEYS.map(() => Math.floor(Math.random() * 40 + 10)), // will be replaced by real data when section reports load
+      data: DEPT_KEYS.map(() => 0),
       backgroundColor: DEPT_KEYS.map((_, i) => {
         const colors = [`${C.red}aa`, `${C.amber}aa`, `${C.purple}aa`, `${C.teal}aa`]
         return colors[i % colors.length]
@@ -720,6 +723,8 @@ export default function AdminDashboard() {
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(280px,1fr))', gap: '14px' }}>
             {Object.entries(DEPT_SECTIONS).map(([dept, sections]) => (
+              // No per-department overview endpoint exists; DeptCard renders '—'
+              // deterministically for a null overview (no fabricated placeholder values).
               <DeptCard
                 key={dept}
                 dept={dept}
