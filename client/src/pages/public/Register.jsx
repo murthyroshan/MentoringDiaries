@@ -471,7 +471,14 @@ export default function Register() {
         payload.department  = data.department
         payload.section     = data.section
         payload.roll_number = Number(data.roll_number)
-        payload.batch       = data.year ? `2023-2027` : undefined
+        // Derive the 4-year batch from the selected study year rather than
+        // hardcoding a single cohort. e.g. a 2nd-year student in 2026 →
+        // started 2025 → batch 2025-2029.
+        const yearIndex = { '1st': 1, '2nd': 2, '3rd': 3, '4th': 4 }[data.year]
+        if (yearIndex) {
+          const startYear = new Date().getFullYear() - (yearIndex - 1)
+          payload.batch = `${startYear}-${startYear + 4}`
+        }
       }
       const res = await api.post('/auth/register', payload)
       const user = res.data?.data?.user || res.data?.user
@@ -744,7 +751,7 @@ export default function Register() {
                               </label>
                               <input
                                 type="number"
-                                min={1} max={10}
+                                min={1} max={20}
                                 {...register('roll_number')}
                                 placeholder="e.g. 3"
                                 style={{

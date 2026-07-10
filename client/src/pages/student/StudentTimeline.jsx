@@ -329,8 +329,6 @@ function MoodAttendanceChart({ entries, history }) {
     return [...s].sort((a, b) => a - b)
   }, [entries, history])
 
-  if (!weekSet.length) return <div style={{ padding: '40px', textAlign: 'center', fontSize: '13px', color: C.muted }}>No data yet</div>
-
   const attMap = useMemo(() => {
     const m = {}
     history.forEach(r => { m[r.week_number] = r.cumulative_pct })
@@ -342,6 +340,10 @@ function MoodAttendanceChart({ entries, history }) {
     entries.forEach(e => { if (e.mood) m[e.week_number] = e.mood })
     return m
   }, [entries])
+
+  // Early return must come AFTER all hooks — otherwise the hook count changes
+  // between renders and React throws "rendered fewer hooks than expected".
+  if (!weekSet.length) return <div style={{ padding: '40px', textAlign: 'center', fontSize: '13px', color: C.muted }}>No data yet</div>
 
   const labels = weekSet.map(w => `Wk ${w}`)
   const attData = weekSet.map(w => attMap[w] ?? null)

@@ -3,6 +3,7 @@ import { io } from 'socket.io-client'
 let socket = null
 let joinedUserId = null
 let joinedRole = null
+let currentJoin = null
 
 export function getSocket() {
     if (!socket) {
@@ -21,6 +22,10 @@ export function getSocket() {
 
         socket.on('disconnect', (reason) => {
             console.debug('[Socket] Disconnected:', reason)
+            // Rooms are per-connection and are lost on disconnect — clear the
+            // guard so the next `connect` (auto-reconnect) re-joins them.
+            joinedUserId = null
+            joinedRole = null
         })
     }
     return socket
@@ -31,7 +36,7 @@ export function connectSocket(userId, role) {
         const s = getSocket()
         if (!userId) return s
 
-        // Prevent duplicate join emissions for the same user session.
+        // Prevent duplicate join emissions for the same live connection.
         const joinRooms = () => {
             if (joinedUserId === userId && joinedRole === role) return
             s.emit('join', userId)
@@ -40,12 +45,15 @@ export function connectSocket(userId, role) {
             joinedRole = role
         }
 
+        // Register a PERSISTENT connect handler (not `.once`) so rooms are
+        // re-joined after every reconnect, not just the first connect. Replace
+        // any handler from a previous connectSocket call to avoid stacking.
+        if (currentJoin) s.off('connect', currentJoin)
+        currentJoin = joinRooms
+        s.on('connect', joinRooms)
+
         if (!s.connected) s.connect()
-        if (s.connected) {
-            joinRooms()
-        } else {
-            s.once('connect', joinRooms)
-        }
+        else joinRooms()
 
         return s
     } catch (err) {

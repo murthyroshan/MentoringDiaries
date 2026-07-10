@@ -6,6 +6,13 @@ import {
   CalendarDays, Award, Bell, Search, Menu,
 } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
+
+// Guard against missing/invalid notification timestamps so one bad payload can't
+// throw and unmount the whole notification dropdown.
+function safeTimeAgo(value) {
+  const d = new Date(value)
+  return isNaN(d.getTime()) ? 'just now' : formatDistanceToNow(d, { addSuffix: true })
+}
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../../store/authStore'
 import { useNotificationStore } from '../../store/notificationStore'
@@ -115,7 +122,7 @@ function StudentNotifDropdown({ onClose }) {
               </p>
               <p style={{ fontSize: '11px', color: C.muted, margin: '2px 0 0', lineHeight: 1.4 }}>{n.message}</p>
               <p style={{ fontSize: '10px', color: 'rgba(242,240,232,0.2)', margin: '3px 0 0' }}>
-                {formatDistanceToNow(new Date(n.at), { addSuffix: true })}
+                {safeTimeAgo(n.at)}
               </p>
             </div>
             {!n.read && <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.gold, flexShrink: 0, marginTop: '5px' }} />}

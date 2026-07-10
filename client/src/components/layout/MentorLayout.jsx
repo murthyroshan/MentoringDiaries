@@ -1,12 +1,20 @@
 import { useCallback, useState, useEffect, useRef } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '../../store/authStore'
 import { useUIStore } from '../../store/uiStore'
 import { useNotificationStore } from '../../store/notificationStore'
+import { getSocket } from '../../services/socket'
 import { formatDistanceToNow } from 'date-fns'
 import api from '../../services/api'
+
+// Guard against missing/invalid notification timestamps — an Invalid Date would
+// make formatDistanceToNow throw and take down the whole notification dropdown.
+function safeTimeAgo(value) {
+  const d = new Date(value)
+  return isNaN(d.getTime()) ? 'just now' : formatDistanceToNow(d, { addSuffix: true })
+}
 
 // ─── Design tokens ─────────────────────────────────────────────────────────────
 const C = {
@@ -355,7 +363,7 @@ function MentorNotifDropdown({ onClose }) {
               </p>
               <p style={{ fontSize: '11px', color: C.muted, margin: '2px 0 0', lineHeight: 1.4 }}>{n.message}</p>
               <p style={{ fontSize: '10px', color: C.subtle, margin: '3px 0 0' }}>
-                {formatDistanceToNow(new Date(n.at), { addSuffix: true })}
+                {safeTimeAgo(n.at)}
               </p>
             </div>
             {!n.read && <span style={{ width: 6, height: 6, borderRadius: '50%', background: C.purple, flexShrink: 0, marginTop: '5px' }} />}
@@ -529,6 +537,30 @@ export default function MentorLayout() {
   )?.[1] ?? 'Mentor'
 
   const handleLogout = useCallback(() => logout(), [logout])
+
+  // Real-time updates: mentors must receive live notifications and have their
+  // dashboards/queues invalidated when a student submits or an entry is flagged.
+  const { addNotification } = useNotificationStore()
+  const queryClient = useQueryClient()
+  useEffect(() => {
+    const socket = getSocket()
+    if (!socket) return
+    const refresh = () => {
+      queryClient.invalidateQueries({ queryKey: ['mentor'] })
+      queryClient.invalidateQueries({ queryKey: ['mentor-priority-queue'] })
+      queryClient.invalidateQueries({ queryKey: ['mentor-entries'] })
+      queryClient.invalidateQueries({ queryKey: ['flagged-entries'] })
+    }
+    const notifHandler = (data) => { addNotification(data); refresh() }
+    const events = ['entry:submitted', 'entry:critical', 'entry:flagged', 'system:announcement']
+    events.forEach(ev => socket.on(ev, notifHandler))
+    const sessionHandler = () => queryClient.invalidateQueries({ queryKey: ['mentor-sessions'] })
+    socket.on('session:update', sessionHandler)
+    return () => {
+      events.forEach(ev => socket.off(ev, notifHandler))
+      socket.off('session:update', sessionHandler)
+    }
+  }, [addNotification, queryClient])
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: C.void }}>

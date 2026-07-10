@@ -63,7 +63,10 @@ export const useNotificationStore = create(
                 try { await api.patch('/notifications/read-all') } catch { }
             },
 
-            clearNotifications: () => set({ notifications: [], unreadCount: 0 }),
+            // Reset `initialized` too, otherwise the next user to log in on the
+            // same SPA session (no page reload) never re-hydrates and sees the
+            // previous user's empty/stale list.
+            clearNotifications: () => set({ notifications: [], unreadCount: 0, initialized: false }),
         }),
         {
             name: 'notification-storage',

@@ -7,7 +7,6 @@ import { useAuthStore, setNavigate } from './store/authStore'
 import { useUIStore } from './store/uiStore'
 
 // Layout
-import DashboardLayout from './components/layout/DashboardLayout'
 import StudentLayout from './components/layout/StudentLayout'
 import AdminLayout from './components/layout/AdminLayout'
 import MentorLayout from './components/layout/MentorLayout'

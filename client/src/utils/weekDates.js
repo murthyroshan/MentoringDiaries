@@ -30,10 +30,16 @@ export function getWeekDateRange(weekNumber, year) {
  * Returns the current ISO week number for today's date.
  */
 export function getCurrentISOWeek() {
+  // Standard ISO-8601 algorithm: shift today to the Thursday of its week, then
+  // count weeks from Jan 1 of *that Thursday's* year. Anchoring to the current
+  // calendar year (as before) produced 0/negative weeks in early January and
+  // 53 in late December when the date belonged to a different ISO year.
   const now = new Date()
-  const jan4 = new Date(Date.UTC(now.getUTCFullYear(), 0, 4))
-  const dayOfWeek = jan4.getUTCDay() || 7
-  const week1Monday = new Date(Date.UTC(now.getUTCFullYear(), 0, 4 - (dayOfWeek - 1)))
-  const diff = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) - week1Monday.getTime()
-  return Math.floor(diff / (7 * 24 * 60 * 60 * 1000)) + 1
+  const target = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+  const dayNr = (target.getUTCDay() + 6) % 7  // Mon=0 … Sun=6
+  target.setUTCDate(target.getUTCDate() - dayNr + 3)  // move to Thursday
+  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4))
+  const firstDayNr = (firstThursday.getUTCDay() + 6) % 7
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDayNr + 3)
+  return 1 + Math.round((target.getTime() - firstThursday.getTime()) / (7 * 24 * 60 * 60 * 1000))
 }
