@@ -32,6 +32,10 @@ Thumbs.db
 *.suo
 *.sw?
 
+# Local tooling / working files (not part of the project)
+.claude/
+plan.md
+
 # PM2
 .pm2/
 
