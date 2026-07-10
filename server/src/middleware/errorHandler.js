@@ -9,7 +9,7 @@ const errorHandler = (err, req, res, next) => {
         requestId: req.requestId,
         method: req.method,
         endpoint: req.originalUrl || req.url,
-        userId: req.user?._id ? String(req.user._id) : null,
+        userId: req.user?.id != null ? String(req.user.id) : null,
         userRole: req.user?.role || null,
         errorName: err.name,
         errorMessage: err.message,
@@ -24,6 +24,16 @@ const errorHandler = (err, req, res, next) => {
         const field = Object.keys(err.keyValue || {})[0] || 'field';
         message = `${field.charAt(0).toUpperCase() + field.slice(1)} already exists.`;
         return res.status(409).json({ success: false, message, requestId: req.requestId });
+    }
+
+    // better-sqlite3 constraint violations (e.g. UNIQUE email, FK) — return 409
+    // with a generic message instead of a 500 that leaks the raw SQL.
+    if (typeof err.code === 'string' && err.code.startsWith('SQLITE_CONSTRAINT')) {
+        return res.status(409).json({
+            success: false,
+            message: 'That record already exists or violates a data constraint.',
+            requestId: req.requestId,
+        });
     }
 
     if (err.name === 'ValidationError') {

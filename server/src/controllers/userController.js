@@ -102,18 +102,32 @@ exports.getUserById = (req, res, next) => {
 exports.updateUser = (req, res, next) => {
     try {
         const userId = Number(req.params.id);
-        const { name, department, batch, roll_number, is_active, role } = req.body;
+        const { name, department, section, batch, roll_number, email, current_semester, is_active, role } = req.body;
 
-        if (req.user.role !== 'admin' && req.user.id !== userId) {
+        const isAdmin = req.user.role === 'admin';
+        if (!isAdmin && req.user.id !== userId) {
             return res.status(403).json({ success: false, message: 'Access denied.' });
         }
 
         const updates = {};
         if (name) updates.name = name.trim();
-        if (department !== undefined) updates.department = department;
-        if (batch !== undefined) updates.batch = batch;
-        if (roll_number !== undefined) updates.roll_number = Number(roll_number);
-        if (req.user.role === 'admin') {
+
+        // Only admins may edit the structural fields that drive attendance lookups,
+        // section reports and role/activation. A student self-editing can change
+        // their display name only — never their department/section/roll.
+        if (isAdmin) {
+            if (department !== undefined) updates.department = department;
+            if (section !== undefined) updates.section = section;
+            if (batch !== undefined) updates.batch = batch;
+            if (email !== undefined) updates.email = String(email).trim().toLowerCase();
+            if (roll_number !== undefined) updates.roll_number = Number(roll_number);
+            if (current_semester !== undefined) {
+                const sem = Number(current_semester);
+                if (!Number.isInteger(sem) || sem < 1 || sem > 8) {
+                    return res.status(400).json({ success: false, message: 'Semester must be an integer between 1 and 8.' });
+                }
+                updates.current_semester = sem;
+            }
             if (is_active !== undefined) updates.is_active = is_active ? 1 : 0;
             if (role !== undefined) {
                 if (!['student', 'mentor', 'admin'].includes(role)) {

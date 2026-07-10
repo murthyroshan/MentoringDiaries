@@ -7,10 +7,16 @@ const { initializeSchema } = require('./schema');
 initializeSchema(db);
 
 // Check if already seeded
+// When this module is auto-required by config/db.js on an empty DB we must NOT
+// call process.exit — that would kill the server before it starts listening.
+// Only exit when the script is run directly (`node src/database/seed.js`).
+const runningStandalone = require.main === module;
+
 const existing = db.prepare('SELECT COUNT(*) as n FROM users').get();
 if (existing.n > 0) {
     console.log('Database already seeded — skipping');
-    process.exit(0);
+    if (runningStandalone) process.exit(0);
+    return;
 }
 
 console.log('Seeding database...');
@@ -394,4 +400,4 @@ console.log(`  Users: ${db.prepare('SELECT COUNT(*) as n FROM users').get().n}`)
 console.log(`  Attendance rows: ${db.prepare('SELECT COUNT(*) as n FROM attendance').get().n}`);
 console.log(`  Diary entries: ${db.prepare('SELECT COUNT(*) as n FROM diary_entries').get().n}`);
 
-process.exit(0);
+if (runningStandalone) process.exit(0);

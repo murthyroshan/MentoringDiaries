@@ -164,6 +164,9 @@ exports.refresh = async (req, res, next) => {
         if (!user || user.refresh_token !== token) {
             return res.status(401).json({ success: false, message: 'Refresh token mismatch.' });
         }
+        if (!user.is_active) {
+            return res.status(401).json({ success: false, message: 'Account is deactivated.' });
+        }
 
         const { accessToken, refreshToken: newRefreshToken } = generateTokens(user.id);
         queries.updateUserRefreshToken(user.id, newRefreshToken);
@@ -177,8 +180,20 @@ exports.refresh = async (req, res, next) => {
 
 exports.logout = async (req, res, next) => {
     try {
-        if (req.user) {
-            queries.updateUserRefreshToken(req.user.id, null);
+        // Logout must work even when the access token has expired, so this route
+        // is not behind `auth`. Identify the session from the refresh cookie
+        // (falling back to req.user if some other middleware set it) and always
+        // clear the cookies regardless.
+        let userId = req.user?.id || null;
+        const token = req.cookies?.refreshToken;
+        if (!userId && token) {
+            try {
+                const decoded = jwt.verify(token, process.env.JWT_REFRESH_SECRET);
+                userId = decoded.id;
+            } catch { /* expired/invalid refresh token — still clear cookies */ }
+        }
+        if (userId) {
+            queries.updateUserRefreshToken(userId, null);
         }
         res.clearCookie('accessToken');
         res.clearCookie('refreshToken');

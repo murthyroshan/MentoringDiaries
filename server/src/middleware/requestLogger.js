@@ -11,7 +11,7 @@ function requestLogger(req, res, next) {
             requestId: req.requestId,
             method: req.method,
             endpoint: req.originalUrl || req.url,
-            userId: req.user?._id ? String(req.user._id) : null,
+            userId: req.user?.id != null ? String(req.user.id) : null,
             userRole: req.user?.role || null,
             statusCode: res.statusCode,
             durationMs: Math.round(durationMs * 100) / 100,

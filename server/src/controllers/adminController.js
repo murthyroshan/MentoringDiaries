@@ -73,21 +73,28 @@ exports.getSectionReport = (req, res, next) => {
         }
 
         // Diary stats per student
+        // Aggregate counts plus each student's *most recent* risk score / mood.
+        // MAX(ai_risk_score) would report the highest-ever value, overstating
+        // risk — instead pull those two from the latest row via a window function.
         const diaryRows = db.prepare(`
             SELECT
-                student_id,
+                d.student_id,
                 COUNT(*) AS total_entries,
-                SUM(CASE WHEN mentor_response IS NULL THEN 1 ELSE 0 END) AS pending_reviews,
-                SUM(CASE WHEN is_flagged = 1 THEN 1 ELSE 0 END) AS flagged_count,
-                MAX(ai_risk_score) AS latest_risk_score,
-                MAX(mood) AS latest_mood,
-                MAX(created_at) AS last_submitted_at
-            FROM diary_entries
-            WHERE semester = ? AND academic_year = ?
-              AND student_id IN (
-                  SELECT id FROM users WHERE role='student' AND is_active=1 AND department=? AND section=?
-              )
-            GROUP BY student_id
+                SUM(CASE WHEN d.mentor_response IS NULL THEN 1 ELSE 0 END) AS pending_reviews,
+                SUM(CASE WHEN d.is_flagged = 1 THEN 1 ELSE 0 END) AS flagged_count,
+                MAX(CASE WHEN d.rn = 1 THEN d.ai_risk_score END) AS latest_risk_score,
+                MAX(CASE WHEN d.rn = 1 THEN d.mood END) AS latest_mood,
+                MAX(d.created_at) AS last_submitted_at
+            FROM (
+                SELECT *,
+                       ROW_NUMBER() OVER (PARTITION BY student_id ORDER BY created_at DESC, id DESC) AS rn
+                FROM diary_entries
+                WHERE semester = ? AND academic_year = ?
+                  AND student_id IN (
+                      SELECT id FROM users WHERE role='student' AND is_active=1 AND department=? AND section=?
+                  )
+            ) d
+            GROUP BY d.student_id
         `).all(semester, academic_year, department, section);
 
         const diaryMap = {};
