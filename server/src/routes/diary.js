@@ -17,7 +17,7 @@ const { upload } = require('../middleware/upload');
 const diaryCreateLimiter = rateLimit({
     windowMs: 60 * 60 * 1000,
     max: 10,
-    keyGenerator: (req) => req.user?._id?.toString() || req.ip,
+    keyGenerator: (req) => (req.user?.id != null ? `u${req.user.id}` : req.ip),
     message: { success: false, message: 'Too many diary submissions. Please wait before submitting again.' },
     standardHeaders: true,
     legacyHeaders: false,

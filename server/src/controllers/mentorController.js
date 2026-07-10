@@ -122,10 +122,15 @@ exports.getDashboardSummary = (req, res, next) => {
             `SELECT COUNT(*) as n FROM diary_entries WHERE student_id IN (${idList}) AND is_flagged = 1 AND mentor_response IS NULL`
         ).get().n;
 
-        // Critical & high risk (latest entry per student)
+        // Critical & high risk (latest entry per student). Use ROW_NUMBER so we
+        // take ai_risk_level from each student's genuinely most-recent row — the
+        // old `GROUP BY … HAVING MAX(created_at)` picked an arbitrary row.
         const latestRiskRows = db.prepare(
-            `SELECT student_id, ai_risk_level FROM diary_entries WHERE student_id IN (${idList})
-             GROUP BY student_id HAVING MAX(created_at)`
+            `SELECT student_id, ai_risk_level FROM (
+                 SELECT student_id, ai_risk_level,
+                        ROW_NUMBER() OVER (PARTITION BY student_id ORDER BY created_at DESC, id DESC) AS rn
+                 FROM diary_entries WHERE student_id IN (${idList})
+             ) WHERE rn = 1`
         ).all();
         const criticalRiskCount = latestRiskRows.filter(r => r.ai_risk_level === 'critical').length;
         const highRiskCount = latestRiskRows.filter(r => r.ai_risk_level === 'high').length;
@@ -550,10 +555,11 @@ exports.getSubjectConcerns = (req, res, next) => {
         const bySubject = {};
         for (const row of subjectRows) {
             if (!bySubject[row.subject_name]) {
-                bySubject[row.subject_name] = { ratings: [], students: new Set(), weeklyRatings: {} };
+                bySubject[row.subject_name] = { ratings: [], students: new Set(), lowStudents: new Set(), weeklyRatings: {} };
             }
             bySubject[row.subject_name].ratings.push(row.rating);
             bySubject[row.subject_name].students.add(row.student_id);
+            if (row.rating < 3) bySubject[row.subject_name].lowStudents.add(row.student_id);
             const key = `${row.student_id}_${row.week_number}`;
             if (!bySubject[row.subject_name].weeklyRatings[key]) {
                 bySubject[row.subject_name].weeklyRatings[key] = row.rating;
@@ -562,8 +568,13 @@ exports.getSubjectConcerns = (req, res, next) => {
 
         const concerns = Object.entries(bySubject).map(([subject_name, data]) => {
             const avgRating = data.ratings.reduce((a, b) => a + b, 0) / data.ratings.length;
-            const studentsRatingBelow3 = data.ratings.filter(r => r < 3).length;
-            const pctStruggling = Math.round((studentsRatingBelow3 / totalStudents) * 100);
+            // Count DISTINCT students with a low rating, not individual weekly
+            // ratings — otherwise one student's 4 low weeks could push the
+            // "% struggling" past 100%.
+            const studentsRatingBelow3 = data.lowStudents.size;
+            const pctStruggling = totalStudents > 0
+                ? Math.min(100, Math.round((studentsRatingBelow3 / totalStudents) * 100))
+                : 0;
 
             // Consecutive low weeks (simplified: any student with 2+ consecutive low-rated weeks)
             let consecutiveLowWeeks = 0;

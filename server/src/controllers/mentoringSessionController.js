@@ -3,6 +3,18 @@ const db = require('../database/db');
 const { notifyUserWithPersistence } = require('../socket');
 const { getPagination } = require('../utils/pagination');
 
+// Parse a client-supplied date and reject unparseable input rather than letting
+// `new Date(x).toISOString()` throw a RangeError that surfaces as a 500.
+function toISO(value) {
+    const d = new Date(value);
+    if (isNaN(d.getTime())) {
+        const err = new Error('Invalid date/time value.');
+        err.statusCode = 400;
+        throw err;
+    }
+    return d.toISOString();
+}
+
 function formatSession(row) {
     if (!row) return null;
     return {
@@ -40,7 +52,7 @@ exports.createSession = (req, res, next) => {
         const sessionId = queries.createSession({
             mentor_id: mentorId,
             student_id: studentId,
-            scheduled_at: new Date(scheduledAt).toISOString(),
+            scheduled_at: toISO(scheduledAt),
             duration_mins: duration_mins ? Number(duration_mins) : null,
             location: location || null,
             notes: notes || null,
@@ -78,7 +90,7 @@ exports.updateSession = (req, res, next) => {
 
         const updates = {};
         const { scheduled_at, date, duration_mins, location, notes, action_items, status } = req.body;
-        if (scheduled_at || date) updates.scheduled_at = new Date(scheduled_at || date).toISOString();
+        if (scheduled_at || date) updates.scheduled_at = toISO(scheduled_at || date);
         if (duration_mins !== undefined) updates.duration_mins = Number(duration_mins);
         if (location !== undefined) updates.location = location;
         if (notes !== undefined) updates.notes = notes;
@@ -125,7 +137,7 @@ exports.getSessions = (req, res, next) => {
             rows = queries.getAllSessions(filters);
         }
 
-        const total = rows.length; // simple count for now
+        const total = queries.countSessions(req.user.role, req.user.id, filters);
         return res.json({
             success: true,
             data: rows.map(formatSession),

@@ -144,6 +144,8 @@ function countEntries(role, userId, filters = {}) {
 
     if (filters.status) { sql += ' AND de.status = ?'; params.push(filters.status); }
     if (filters.is_flagged !== undefined) { sql += ' AND de.is_flagged = ?'; params.push(filters.is_flagged); }
+    if (filters.semester !== undefined) { sql += ' AND de.semester = ?'; params.push(filters.semester); }
+    if (filters.academic_year) { sql += ' AND de.academic_year = ?'; params.push(filters.academic_year); }
 
     return db.prepare(sql).get(...params).n;
 }
@@ -234,25 +236,32 @@ function getAttendanceHistory(department, section, rollNumber, academicYear, sem
 // ─── Analytics queries ────────────────────────────────────────────────────────
 
 function getRiskHistory(studentId, semester, academicYear) {
-    return db.prepare(`
+    // `semester = NULL` is never true in SQL, so a null semester must drop the
+    // predicate entirely rather than silently returning zero rows.
+    let sql = `
         SELECT week_number, ai_risk_score, ai_sentiment, mood, created_at
         FROM diary_entries
-        WHERE student_id = ? AND semester = ? AND academic_year = ?
-        ORDER BY week_number ASC
-    `).all(studentId, semester, academicYear);
+        WHERE student_id = ? AND academic_year = ?
+    `;
+    const params = [studentId, academicYear];
+    if (semester != null) { sql += ' AND semester = ?'; params.push(semester); }
+    sql += ' ORDER BY week_number ASC';
+    return db.prepare(sql).all(...params);
 }
 
 function getSubjectPerformance(studentId, semester, academicYear) {
-    return db.prepare(`
+    let sql = `
         SELECT dsr.subject_name,
                AVG(dsr.rating) as avg_rating,
                COUNT(*) as entry_count
         FROM diary_subject_ratings dsr
         JOIN diary_entries de ON de.id = dsr.entry_id
-        WHERE de.student_id = ? AND de.semester = ? AND de.academic_year = ?
-        GROUP BY dsr.subject_name
-        ORDER BY avg_rating DESC
-    `).all(studentId, semester, academicYear);
+        WHERE de.student_id = ? AND de.academic_year = ?
+    `;
+    const params = [studentId, academicYear];
+    if (semester != null) { sql += ' AND de.semester = ?'; params.push(semester); }
+    sql += ' GROUP BY dsr.subject_name ORDER BY avg_rating DESC';
+    return db.prepare(sql).all(...params);
 }
 
 function getSemesterHeatmap(studentId, academicYear, semester) {
@@ -346,6 +355,15 @@ function getAllSessions(filters = {}) {
     sql += ' ORDER BY ms.scheduled_at DESC';
     if (filters.limit) { sql += ' LIMIT ? OFFSET ?'; params.push(filters.limit, filters.offset || 0); }
     return db.prepare(sql).all(...params);
+}
+
+function countSessions(role, userId, filters = {}) {
+    let sql = 'SELECT COUNT(*) as n FROM mentoring_sessions WHERE 1=1';
+    const params = [];
+    if (role === 'student') { sql += ' AND student_id = ?'; params.push(userId); }
+    else if (role === 'mentor') { sql += ' AND mentor_id = ?'; params.push(userId); }
+    if (filters.student_id) { sql += ' AND student_id = ?'; params.push(filters.student_id); }
+    return db.prepare(sql).get(...params).n;
 }
 
 function createSession(data) {
@@ -522,6 +540,7 @@ module.exports = {
     getSessionsByStudent,
     getSessionsByMentor,
     getAllSessions,
+    countSessions,
     createSession,
     getSessionById,
     updateSession,

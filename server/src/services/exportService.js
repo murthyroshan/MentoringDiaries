@@ -1,7 +1,13 @@
 const db = require('../database/db');
 
 const escapeCSV = (val) => {
-    const str = val == null ? '' : String(val);
+    let str = val == null ? '' : String(val);
+    // Neutralise spreadsheet formula injection: a field beginning with =, +, -, @,
+    // or a control char is executed as a formula by Excel/Sheets. Prefix with a
+    // single quote so it is rendered as literal text.
+    if (/^[=+\-@\t\r]/.test(str)) {
+        str = `'${str}`;
+    }
     return str.includes(',') || str.includes('"') || str.includes('\n')
         ? `"${str.replace(/"/g, '""')}"`
         : str;

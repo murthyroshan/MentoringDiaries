@@ -152,6 +152,14 @@ exports.getStudentWeeklyInsight = async (req, res, next) => {
             return res.status(400).json({ success: false, message: 'studentId is required.' });
         }
 
+        // A mentor may only view insights for their own assigned students.
+        if (req.user.role === 'mentor') {
+            const s = db.prepare('SELECT mentor_id FROM users WHERE id = ?').get(resolvedStudentId);
+            if (!s || s.mentor_id !== req.user.id) {
+                return res.status(403).json({ success: false, message: 'Access denied.' });
+            }
+        }
+
         const existing = queries.getLatestInsight(resolvedStudentId, weekNum, yr, sem);
         if (existing) {
             return res.json({ success: true, data: { ...existing, cached: true } });
