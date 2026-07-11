@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const rateLimit = require('express-rate-limit');
 const {
-    createEntry, getEntries, getEntry,
+    createEntry, getEntries, getEntry, updateEntry,
     addMentorResponse, getFlaggedEntries, getStudentRiskHistory,
     getMentorSuggestion,
     getPriorityQueue,
@@ -39,5 +39,8 @@ router.get('/:id/mentor-suggestion', requireRole('mentor', 'admin'), getMentorSu
 router.get('/', getEntries);
 router.get('/:id', getEntry);
 router.patch('/:id/response', requireRole('mentor', 'admin'), mentorResponseValidation, addMentorResponse);
+// Edit an existing entry (student, own entry). Accepts a multipart body with an
+// optional replacement attachment, mirroring the create route.
+router.patch('/:id', requireRole('student'), upload.single('attachment'), cleanupUpload, sanitizeMultipart, updateEntry);
 
 module.exports = router;

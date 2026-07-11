@@ -31,7 +31,14 @@ const db = require('./database/db');
 
 const app = express();
 
-app.set('trust proxy', 1);
+// Only trust X-Forwarded-For when actually deployed behind a known proxy. With
+// an unconditional `trust proxy`, a directly-exposed server lets a client spoof
+// req.ip via X-Forwarded-For and defeat the IP-keyed auth rate limiter. Operators
+// behind a proxy set TRUST_PROXY (e.g. "1" for one hop, or a subnet); default off.
+const trustProxy = process.env.TRUST_PROXY;
+app.set('trust proxy', trustProxy == null || trustProxy === ''
+    ? false
+    : (/^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy));
 app.use(requestId);
 app.use(responseEnvelope);
 

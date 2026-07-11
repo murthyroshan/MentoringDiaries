@@ -316,6 +316,7 @@ exports.updateEntry = async (req, res, next) => {
         if (mood !== undefined) updates.mood = Number(mood);
         if (weekly_difficulty !== undefined) updates.weekly_difficulty = Number(weekly_difficulty);
         if (attendance_explanation !== undefined) updates.attendance_explanation = attendance_explanation;
+        if (req.file) updates.attachment_url = `/uploads/${req.file.filename}`;
 
         // Re-run AI if reflection changed
         if (reflection) {
@@ -420,16 +421,18 @@ exports.getFlaggedEntries = (req, res, next) => {
 exports.getPriorityQueue = (req, res, next) => {
     try {
         const { page, limit, skip } = getPagination(req.query);
-        const filters = { limit, offset: skip };
 
+        // Fetch the full set unpaginated, then sort by priority — paginating in
+        // SQL (ordered by created_at) first would leave the highest-priority
+        // entries stranded on later pages, defeating the queue's whole purpose.
         let entries;
         if (req.user.role === 'mentor') {
-            entries = queries.getEntriesForMentor(req.user.id, filters);
+            entries = queries.getEntriesForMentor(req.user.id, {});
         } else {
-            entries = queries.getAllEntries(filters);
+            entries = queries.getAllEntries({});
         }
 
-        const total = queries.countEntries(req.user.role, req.user.id, filters);
+        const total = entries.length;
 
         const getPriorityRank = (e) => {
             if (e.ai_risk_level === 'critical') return 1;
@@ -452,9 +455,11 @@ exports.getPriorityQueue = (req, res, next) => {
                 return new Date(b.created_at) - new Date(a.created_at);
             });
 
+        const paged = sorted.slice(skip, skip + limit);
+
         return res.json({
             success: true,
-            data: sorted,
+            data: paged,
             pagination: { total, page, limit, pages: Math.ceil(total / limit) },
         });
     } catch (error) {

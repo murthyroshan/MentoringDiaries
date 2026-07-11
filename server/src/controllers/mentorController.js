@@ -13,11 +13,31 @@ function currentAcademicYear() {
         : `${y - 1}-${String(y).slice(2)}`;
 }
 
+// ISO-8601 week number (UTC), matching the client's getCurrentISOWeek so that
+// "this week" comparisons line up with the week_number clients actually submit.
+// The previous Sunday-based formula returned a different week for most of the
+// year, making every "this week" mentor stat compare against the wrong week.
 function currentWeekNumber() {
     const now = new Date();
-    const startOfYear = new Date(now.getFullYear(), 0, 1);
-    const days = Math.floor((now - startOfYear) / 86400000);
-    return Math.ceil((days + startOfYear.getDay() + 1) / 7);
+    const target = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const dayNr = (target.getUTCDay() + 6) % 7;       // Mon=0 … Sun=6
+    target.setUTCDate(target.getUTCDate() - dayNr + 3); // move to Thursday of this week
+    const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
+    const firstDayNr = (firstThursday.getUTCDay() + 6) % 7;
+    firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDayNr + 3);
+    return 1 + Math.round((target.getTime() - firstThursday.getTime()) / (7 * 24 * 60 * 60 * 1000));
+}
+
+// Parse a client-supplied date, rejecting unparseable input with a 400 instead
+// of letting `new Date(x).toISOString()` throw a RangeError that surfaces as 500.
+function toISO(value) {
+    const d = new Date(value);
+    if (isNaN(d.getTime())) {
+        const err = new Error('Invalid date/time value.');
+        err.statusCode = 400;
+        throw err;
+    }
+    return d.toISOString();
 }
 
 function safeJson(val, fallback = []) {
@@ -135,12 +155,18 @@ exports.getDashboardSummary = (req, res, next) => {
         const criticalRiskCount = latestRiskRows.filter(r => r.ai_risk_level === 'critical').length;
         const highRiskCount = latestRiskRows.filter(r => r.ai_risk_level === 'high').length;
 
-        // Below 75% attendance
+        // Below 75% attendance — evaluate only each student's LATEST attendance
+        // week, matching the attendance-watchlist and roster panels. Counting any
+        // week ever below 75% (across all semesters) over-reported and disagreed
+        // with those panels.
         const below75Rows = db.prepare(
-            `SELECT u.id FROM users u
-             JOIN attendance a ON a.department = u.department AND a.section = u.section AND a.roll_number = u.roll_number
-             WHERE u.id IN (${idList}) AND a.cumulative_pct < 75
-             GROUP BY u.id`
+            `SELECT id FROM (
+                SELECT u.id, a.cumulative_pct,
+                       ROW_NUMBER() OVER (PARTITION BY u.id ORDER BY a.week_number DESC) AS rn
+                FROM users u
+                JOIN attendance a ON a.department = u.department AND a.section = u.section AND a.roll_number = u.roll_number
+                WHERE u.id IN (${idList})
+             ) WHERE rn = 1 AND cumulative_pct < 75`
         ).all();
         const below75Count = below75Rows.length;
 
@@ -717,7 +743,7 @@ exports.createMentorSession = (req, res, next) => {
         const sessionId = queries.createSession({
             mentor_id: mentorId,
             student_id: Number(student_id),
-            scheduled_at: new Date(scheduled_at).toISOString(),
+            scheduled_at: toISO(scheduled_at),
             duration_mins: duration_mins ? Number(duration_mins) : null,
             location: location || null,
             notes: notes || null,
@@ -837,7 +863,7 @@ exports.bulkAction = (req, res, next) => {
                 const sessionId = queries.createSession({
                     mentor_id: mentorId,
                     student_id: Number(sid),
-                    scheduled_at: new Date(scheduled_at).toISOString(),
+                    scheduled_at: toISO(scheduled_at),
                     duration_mins: duration_mins ? Number(duration_mins) : null,
                     location: location || null,
                     notes: 'Group session',
