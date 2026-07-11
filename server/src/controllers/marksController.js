@@ -44,16 +44,21 @@ exports.createMarks = (req, res, next) => {
             return res.status(409).json({ success: false, message: 'Entry exists. Use PUT to update.' });
         }
 
-        const entryId = queries.createMarksEntry({
-            student_id: req.user.id,
-            semester: sem,
-            academic_year: yr,
-            cgpa: cgpa ? Number(cgpa) : null,
-        });
-
-        if (Array.isArray(subjects) && subjects.length > 0) {
-            queries.insertMarkSubjects(entryId, subjects);
-        }
+        // Entry row + subject rows must be atomic: a subject insert that fails
+        // (e.g. NOT NULL grade) would otherwise leave an orphan entry that blocks
+        // the student from ever re-posting.
+        const entryId = db.transaction(() => {
+            const id = queries.createMarksEntry({
+                student_id: req.user.id,
+                semester: sem,
+                academic_year: yr,
+                cgpa: cgpa ? Number(cgpa) : null,
+            });
+            if (Array.isArray(subjects) && subjects.length > 0) {
+                queries.insertMarkSubjects(id, subjects);
+            }
+            return id;
+        })();
 
         const entry = queries.getMarksEntry(req.user.id, sem, yr);
         return res.status(201).json({
@@ -78,12 +83,16 @@ exports.updateMarks = (req, res, next) => {
         const updates = { submission_count: entry.submission_count + 1 };
         if (cgpa !== undefined) updates.cgpa = Number(cgpa);
 
-        queries.updateMarksEntry(entryId, updates);
-
-        if (Array.isArray(subjects)) {
-            queries.deleteMarkSubjects(entryId);
-            if (subjects.length > 0) queries.insertMarkSubjects(entryId, subjects);
-        }
+        // All three writes must be atomic: without a transaction, a failing
+        // re-insert would leave the subjects deleted AND the submission_count
+        // already incremented, permanently corrupting the entry.
+        db.transaction(() => {
+            queries.updateMarksEntry(entryId, updates);
+            if (Array.isArray(subjects)) {
+                queries.deleteMarkSubjects(entryId);
+                if (subjects.length > 0) queries.insertMarkSubjects(entryId, subjects);
+            }
+        })();
 
         const updated = db.prepare('SELECT * FROM marks_entries WHERE id = ?').get(entryId);
         return res.json({

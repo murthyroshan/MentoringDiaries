@@ -43,8 +43,8 @@ exports.getUsers = (req, res, next) => {
         else { sql += ' AND u.is_active = 1'; }
 
         if (search) {
-            const s = `%${search.replace(/[%_]/g, '\\$&').slice(0, 80)}%`;
-            sql += ' AND (u.name LIKE ? OR u.email LIKE ? OR u.department LIKE ?)';
+            const s = `%${search.replace(/[%_\\]/g, '\\$&').slice(0, 80)}%`;
+            sql += " AND (u.name LIKE ? ESCAPE '\\' OR u.email LIKE ? ESCAPE '\\' OR u.department LIKE ? ESCAPE '\\')";
             params.push(s, s, s);
         }
 
@@ -161,7 +161,7 @@ exports.assignMentor = (req, res, next) => {
         const { mentorId } = req.body;
 
         const student = db.prepare('SELECT * FROM users WHERE id = ? AND role = ?').get(studentId, 'student');
-        const mentor = db.prepare('SELECT * FROM users WHERE id = ? AND role = ?').get(Number(mentorId), 'mentor');
+        const mentor = db.prepare('SELECT * FROM users WHERE id = ? AND role = ? AND is_active = 1').get(Number(mentorId), 'mentor');
 
         if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
         if (!mentor)  return res.status(404).json({ success: false, message: 'Mentor not found' });

@@ -94,6 +94,19 @@ describe('POST /api/auth/register', () => {
         });
         expect(res.status).toBe(400);
     });
+
+    it('ignores a client-supplied admin role (no privilege escalation)', async () => {
+        const res = await post('/api/auth/register', {
+            name: 'Sneaky', email: 'cse.a2@gcet.edu.in',
+            password: 'Student@123', role: 'admin',
+            department: 'CSE', section: 'A', roll_number: 2,
+        });
+        expect(res.status).toBe(201);
+        // The role must be forced to student regardless of the request body.
+        expect(res.body.data.user.role).toBe('student');
+        const row = db.prepare("SELECT role FROM users WHERE email = 'cse.a2@gcet.edu.in'").get();
+        expect(row.role).toBe('student');
+    });
 });
 
 describe('POST /api/auth/login', () => {

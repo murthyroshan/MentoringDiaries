@@ -54,9 +54,15 @@ const errorHandler = (err, req, res, next) => {
         return res.status(400).json({ success: false, message: err.message, requestId: req.requestId });
     }
 
+    // Never leak raw internal error text (SQLite messages, filesystem paths,
+    // upstream API errors) to clients on 5xx. Explicit client errors (4xx set
+    // via err.statusCode) may keep their curated message.
+    const isServerError = statusCode >= 500;
+    const clientMessage = isServerError ? 'Internal server error' : message;
+
     return res.status(statusCode).json({
         success: false,
-        message,
+        message: clientMessage,
         requestId: req.requestId,
         ...(details && { details }),
         ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),

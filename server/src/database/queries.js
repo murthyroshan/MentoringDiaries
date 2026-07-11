@@ -50,6 +50,20 @@ function getStudentsByMentor(mentorId) {
 
 // ─── Diary queries ────────────────────────────────────────────────────────────
 
+// Shared free-text search (student name/email or reflection) and risk-level
+// filter for the diary list/count queries. All callers alias diary_entries as
+// `de` and users as `u`, so the clause is identical. Mutates `params`.
+function appendEntrySearch(filters, params) {
+    let sql = '';
+    if (filters.riskLevel) { sql += ' AND de.ai_risk_level = ?'; params.push(filters.riskLevel); }
+    if (filters.search) {
+        const s = `%${String(filters.search).replace(/[%_\\]/g, '\\$&').slice(0, 80)}%`;
+        sql += " AND (u.name LIKE ? ESCAPE '\\' OR u.email LIKE ? ESCAPE '\\' OR de.reflection LIKE ? ESCAPE '\\')";
+        params.push(s, s, s);
+    }
+    return sql;
+}
+
 function getEntriesByStudent(studentId, filters = {}) {
     let sql = `
         SELECT de.*,
@@ -68,6 +82,7 @@ function getEntriesByStudent(studentId, filters = {}) {
     if (filters.week_number !== undefined) { sql += ' AND de.week_number = ?'; params.push(filters.week_number); }
     if (filters.status) { sql += ' AND de.status = ?'; params.push(filters.status); }
     if (filters.is_flagged !== undefined) { sql += ' AND de.is_flagged = ?'; params.push(filters.is_flagged); }
+    sql += appendEntrySearch(filters, params);
 
     sql += ' ORDER BY de.week_number DESC';
     if (filters.limit) { sql += ' LIMIT ? OFFSET ?'; params.push(filters.limit, filters.offset || 0); }
@@ -93,6 +108,7 @@ function getEntriesForMentor(mentorId, filters = {}) {
     if (filters.semester !== undefined) { sql += ' AND de.semester = ?'; params.push(filters.semester); }
     if (filters.status) { sql += ' AND de.status = ?'; params.push(filters.status); }
     if (filters.is_flagged !== undefined) { sql += ' AND de.is_flagged = ?'; params.push(filters.is_flagged); }
+    sql += appendEntrySearch(filters, params);
 
     sql += ' ORDER BY de.created_at DESC';
     if (filters.limit) { sql += ' LIMIT ? OFFSET ?'; params.push(filters.limit, filters.offset || 0); }
@@ -119,6 +135,7 @@ function getAllEntries(filters = {}) {
     if (filters.status) { sql += ' AND de.status = ?'; params.push(filters.status); }
     if (filters.is_flagged !== undefined) { sql += ' AND de.is_flagged = ?'; params.push(filters.is_flagged); }
     if (filters.academic_year) { sql += ' AND de.academic_year = ?'; params.push(filters.academic_year); }
+    sql += appendEntrySearch(filters, params);
 
     sql += ' ORDER BY de.created_at DESC';
     if (filters.limit) { sql += ' LIMIT ? OFFSET ?'; params.push(filters.limit, filters.offset || 0); }
@@ -146,6 +163,7 @@ function countEntries(role, userId, filters = {}) {
     if (filters.is_flagged !== undefined) { sql += ' AND de.is_flagged = ?'; params.push(filters.is_flagged); }
     if (filters.semester !== undefined) { sql += ' AND de.semester = ?'; params.push(filters.semester); }
     if (filters.academic_year) { sql += ' AND de.academic_year = ?'; params.push(filters.academic_year); }
+    sql += appendEntrySearch(filters, params);
 
     return db.prepare(sql).get(...params).n;
 }
@@ -390,7 +408,11 @@ function getSessionById(id) {
 }
 
 function updateSession(id, data) {
-    const fields = Object.keys(data).map(k => `${k} = @${k}`).join(', ');
+    const keys = Object.keys(data);
+    // No recognised fields to update — avoid emitting `SET  WHERE ...`, which is
+    // invalid SQL and would 500. Nothing to change, so this is a no-op.
+    if (keys.length === 0) return { changes: 0 };
+    const fields = keys.map(k => `${k} = @${k}`).join(', ');
     data.id = id;
     return db.prepare(`UPDATE mentoring_sessions SET ${fields} WHERE id = @id`).run(data);
 }

@@ -11,7 +11,8 @@ const {
 const auth = require('../middleware/auth');
 const requireRole = require('../middleware/roleCheck');
 const { createEntryValidation, mentorResponseValidation } = require('../middleware/validate');
-const { upload } = require('../middleware/upload');
+const { upload, cleanupUpload } = require('../middleware/upload');
+const sanitizeMultipart = require('../middleware/sanitizeMultipart');
 
 // 10 diary submissions per user per hour — protects Groq API quota and DB storage.
 const diaryCreateLimiter = rateLimit({
@@ -26,7 +27,7 @@ const diaryCreateLimiter = rateLimit({
 router.use(auth);
 
 // POST - create entry (optional file attachment)
-router.post('/', requireRole('student'), diaryCreateLimiter, upload.single('attachment'), createEntryValidation, createEntry);
+router.post('/', requireRole('student'), diaryCreateLimiter, upload.single('attachment'), cleanupUpload, sanitizeMultipart, createEntryValidation, createEntry);
 
 // IMPORTANT: specific paths MUST come before /:id wildcard
 router.get('/check-range', requireRole('student'), checkRange);

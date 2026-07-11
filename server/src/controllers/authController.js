@@ -44,12 +44,14 @@ function safeUser(u) {
 
 exports.register = async (req, res, next) => {
     try {
-        const { name, email, password, role, department, section, roll_number, batch } = req.body;
+        const { name, email, password, department, section, roll_number, batch } = req.body;
 
         const normEmail = (email || '').trim().toLowerCase();
 
-        // Role whitelist
-        const userRole = ['student', 'mentor', 'admin'].includes(role) ? role : 'student';
+        // Public self-registration always creates a student. Elevated roles
+        // (mentor/admin) are provisioned only through the admin-only
+        // POST /api/admin/users endpoint; any client-supplied `role` is ignored.
+        const userRole = 'student';
 
         if (userRole === 'student') {
             if (!department || !VALID_SECTIONS[department]) {

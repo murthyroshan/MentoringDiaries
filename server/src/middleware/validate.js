@@ -32,14 +32,12 @@ const registerValidation = [
         .isLength({ min: 8 }).withMessage('Password must be at least 8 characters')
         .matches(/[A-Z]/).withMessage('Password must contain at least one uppercase letter')
         .matches(/[0-9]/).withMessage('Password must contain at least one number'),
-    body('role')
-        .optional().isIn(['student', 'mentor', 'admin']).withMessage('Role must be student, mentor, or admin'),
+    // Public registration always provisions a student; any `role` in the body
+    // is ignored by the controller, so student fields are always required.
     body('department')
-        .if((_, { req }) => !req.body.role || req.body.role === 'student')
         .notEmpty().withMessage('Department is required')
         .isIn(Object.keys(VALID_SECTIONS)).withMessage(`Department must be one of: ${Object.keys(VALID_SECTIONS).join(', ')}`),
     body('section')
-        .if((_, { req }) => !req.body.role || req.body.role === 'student')
         .notEmpty().withMessage('Section is required')
         .custom((section, { req }) => {
             const dept = req.body.department;
@@ -49,7 +47,6 @@ const registerValidation = [
             return true;
         }),
     body('roll_number')
-        .if((_, { req }) => !req.body.role || req.body.role === 'student')
         .notEmpty().withMessage('Roll number is required')
         .isInt({ min: 1, max: 20 }).withMessage('Roll number must be between 1 and 20'),
     body('batch').optional().trim(),
@@ -113,13 +110,33 @@ const updateUserValidation = [
 ];
 
 // ─── Marks Validators ─────────────────────────────────────────────────────────
+const VALID_GRADES = ['F', 'C', 'B', 'B+', 'A', 'A+', 'O'];
+
+// Each subject persists to marks_subjects (subject_name NOT NULL, grade NOT NULL).
+// The insert accepts either `name` or `subject_name`, so validate both keys and
+// require a grade — otherwise an omitted grade throws a NOT NULL error mid-write.
+function validateSubjects(arr) {
+    if (!Array.isArray(arr)) throw new Error('Subjects must be an array');
+    arr.forEach((s, i) => {
+        const name = s && (s.subject_name || s.name);
+        if (!name || !String(name).trim()) throw new Error(`subjects[${i}].name is required`);
+        if (!VALID_GRADES.includes(s.grade)) throw new Error(`subjects[${i}].grade must be one of: ${VALID_GRADES.join(', ')}`);
+    });
+    return true;
+}
+
 const createMarksValidation = [
     body('semester').isInt({ min: 1, max: 8 }).withMessage('Semester must be 1-8'),
     body('cgpa').optional().isFloat({ min: 0, max: 10 }).withMessage('CGPA must be 0-10'),
     body('subjects').optional().isArray().withMessage('Subjects must be an array'),
-    body('subjects.*.grade')
-        .optional()
-        .isIn(['F', 'C', 'B', 'B+', 'A', 'A+', 'O']).withMessage('Grade must be one of: F, C, B, B+, A, A+, O'),
+    body('subjects').optional().custom(validateSubjects),
+    validate,
+];
+
+const updateMarksValidation = [
+    body('cgpa').optional().isFloat({ min: 0, max: 10 }).withMessage('CGPA must be 0-10'),
+    body('subjects').optional().isArray().withMessage('Subjects must be an array'),
+    body('subjects').optional().custom(validateSubjects),
     validate,
 ];
 
@@ -139,5 +156,6 @@ module.exports = {
     assignMentorValidation,
     updateUserValidation,
     createMarksValidation,
+    updateMarksValidation,
     createAchievementValidation,
 };

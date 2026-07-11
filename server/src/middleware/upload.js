@@ -47,4 +47,17 @@ const upload = multer({
     },
 });
 
-module.exports = { upload };
+// multer streams the file to disk before validation or business rules run, so a
+// rejected request (400/415/etc.) would otherwise leave a permanent orphan file.
+// Register this immediately after `upload.single(...)` to unlink the file once
+// the response is finished with an error status.
+const cleanupUpload = (req, res, next) => {
+    res.on('finish', () => {
+        if (req.file && res.statusCode >= 400) {
+            fs.promises.unlink(req.file.path).catch(() => {});
+        }
+    });
+    next();
+};
+
+module.exports = { upload, cleanupUpload };

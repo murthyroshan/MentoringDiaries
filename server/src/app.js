@@ -124,14 +124,19 @@ app.get('/uploads/:filename', auth, (req, res, next) => {
         const { filename } = req.params;
         if (/[/\\]|\.\./.test(filename)) return res.status(400).end();
 
-        const entry = db.prepare('SELECT student_id FROM diary_entries WHERE attachment_url = ?')
-            .get(`/uploads/${filename}`);
-        if (!entry) return res.status(404).end();
+        // Files live in one directory but are referenced from two tables:
+        // diary_entries.attachment_url and achievements.proof_url. Resolve the
+        // owning student from whichever table references this path.
+        const publicPath = `/uploads/${filename}`;
+        const owner =
+            db.prepare('SELECT student_id FROM diary_entries WHERE attachment_url = ?').get(publicPath) ||
+            db.prepare('SELECT student_id FROM achievements WHERE proof_url = ?').get(publicPath);
+        if (!owner) return res.status(404).end();
 
         const uid = req.user.id;
-        const student = queries.findUserById(entry.student_id);
+        const student = queries.findUserById(owner.student_id);
         const canAccess =
-            entry.student_id === uid ||
+            owner.student_id === uid ||
             (student && student.mentor_id === uid) ||
             req.user.role === 'admin';
         if (!canAccess) return res.status(403).end();

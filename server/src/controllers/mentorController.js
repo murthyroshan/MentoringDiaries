@@ -314,8 +314,11 @@ exports.getStudentsRoster = (req, res, next) => {
             const latestEntry = recentEntries[0] || null;
             const riskTrend = recentEntries.map(e => e.ai_risk_score || 0).reverse();
 
-            // Pending reviews (no mentor_response)
-            const pendingReviews = recentEntries.filter(e => !e.mentor_response).length;
+            // Pending reviews (no mentor_response) — count over ALL entries, not
+            // just the last 4, otherwise a real backlog is silently capped at 4.
+            const pendingReviews = db.prepare(
+                'SELECT COUNT(*) as n FROM diary_entries WHERE student_id = ? AND (mentor_response IS NULL OR mentor_response = ?)'
+            ).get(s.id, '').n;
 
             // Total entries this semester
             const totalEntries = db.prepare(
@@ -800,12 +803,8 @@ exports.bulkAction = (req, res, next) => {
 
         if (action === 'send_reminder') {
             for (const sid of student_ids) {
-                queries.createNotification(
-                    Number(sid),
-                    'mentor:reminder',
-                    'Your mentor has sent you a reminder to submit your diary.',
-                    null
-                );
+                // notifyUserWithPersistence both writes the row and emits — do not
+                // also call createNotification, or every reminder is stored twice.
                 notifyUserWithPersistence(Number(sid), {
                     type: 'mentor:reminder',
                     title: 'Diary Reminder',
@@ -822,7 +821,8 @@ exports.bulkAction = (req, res, next) => {
             const admins = db.prepare("SELECT id FROM users WHERE role = 'admin' AND is_active = 1").all();
             const msg = `Mentor ${mentorName} flagged these students for attention: ${studentNames.join(', ')}`;
             for (const admin of admins) {
-                queries.createNotification(admin.id, 'admin:flag', msg, null);
+                // notifyUserWithPersistence persists the row itself; a second
+                // createNotification here would double every admin flag.
                 notifyUserWithPersistence(admin.id, {
                     type: 'admin:flag',
                     title: 'Students Flagged',

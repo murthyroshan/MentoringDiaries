@@ -222,7 +222,7 @@ exports.createEntry = async (req, res, next) => {
 // GET /api/diary
 exports.getEntries = (req, res, next) => {
     try {
-        const { status, is_flagged, semester, student_id } = req.query;
+        const { status, is_flagged, semester, student_id, search, riskLevel } = req.query;
         const { page, limit, skip } = getPagination(req.query);
 
         const filters = {
@@ -231,6 +231,8 @@ exports.getEntries = (req, res, next) => {
             ...(status ? { status } : {}),
             ...(is_flagged !== undefined ? { is_flagged: is_flagged === 'true' ? 1 : 0 } : {}),
             ...(semester !== undefined ? { semester: Number(semester) } : {}),
+            ...(search ? { search: String(search) } : {}),
+            ...(riskLevel ? { riskLevel: String(riskLevel) } : {}),
         };
 
         let entries;
