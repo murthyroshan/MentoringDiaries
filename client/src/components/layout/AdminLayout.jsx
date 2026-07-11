@@ -483,7 +483,7 @@ export default function AdminLayout() {
       queryClient.invalidateQueries({ queryKey: ['admin-risk-monitor'] })
       queryClient.invalidateQueries({ queryKey: ['admin-entries'] })
     }
-    const events = ['entry:submitted', 'entry:critical', 'entry:flagged', 'system:announcement', 'session:update']
+    const events = ['entry:submitted', 'entry:critical', 'entry:flagged', 'system:announcement', 'session:update', 'admin:flag']
     events.forEach(ev => socket.on(ev, notifHandler))
     return () => events.forEach(ev => socket.off(ev, notifHandler))
   }, [addNotification, queryClient])

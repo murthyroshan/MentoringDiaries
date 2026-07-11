@@ -51,9 +51,22 @@ import NotFoundPage from './pages/NotFoundPage'
 import ToastContainer from './components/ui/ToastContainer'
 import CustomCursor from './components/ui/CustomCursor'
 
+function AuthLoading() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#0A0A0F', color: '#A78BFA', fontFamily: 'system-ui, sans-serif', fontSize: '14px' }}>
+      Loading…
+    </div>
+  )
+}
+
 function ProtectedRoute({ children, allowedRoles }) {
-  const { isAuthenticated, user } = useAuthStore()
+  const { isAuthenticated, hasCheckedAuth, user } = useAuthStore()
   if (!isAuthenticated) return <Navigate to="/login" replace />
+  // Session restored from storage but not yet verified against /auth/me: the
+  // persisted user is only a partial stub (no current_semester/batch), so hold
+  // rendering until the full user arrives — otherwise pages fire API requests
+  // with defaulted params and cache wrong-semester responses.
+  if (!hasCheckedAuth) return <AuthLoading />
   if (allowedRoles && !allowedRoles.includes(user?.role)) {
     const redirects = { student: '/student/dashboard', mentor: '/mentor/dashboard', admin: '/admin/dashboard' }
     return <Navigate to={redirects[user?.role] || '/login'} replace />

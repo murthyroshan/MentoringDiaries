@@ -13,6 +13,7 @@ import {
 import { Bar } from 'react-chartjs-2'
 import { useAuthStore } from '../../store/authStore'
 import api from '../../services/api'
+import { getCurrentISOWeek } from '../../utils/weekDates'
 import { format } from 'date-fns'
 
 ChartJS.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip)
@@ -43,17 +44,6 @@ function currentAcademicYear() {
   return now.getMonth() >= 5
     ? `${y}-${String(y + 1).slice(2)}`
     : `${y - 1}-${String(y).slice(2)}`
-}
-
-function getCurrentAcademicWeek(semester = 1, academicYear = '') {
-  const parts = (academicYear || currentAcademicYear()).split('-')
-  const startYear = parseInt(parts[0]) || new Date().getFullYear()
-  const isOdd = (Number(semester) || 1) % 2 === 1
-  const semStart = isOdd
-    ? new Date(startYear, 5, 1)       // Odd semesters: June 1
-    : new Date(startYear + 1, 0, 1)   // Even semesters: Jan 1
-  const days = Math.floor((Date.now() - semStart.getTime()) / 86400000)
-  return Math.min(Math.max(1, Math.ceil((days + 1) / 7)), 16)
 }
 
 function getGreeting() {
@@ -392,7 +382,10 @@ export default function StudentDashboard() {
 
   const semester = user?.current_semester ?? 1
   const academicYear = currentAcademicYear()
-  const currentWeek = getCurrentAcademicWeek(semester, academicYear)
+  // Use the ISO calendar week — the same basis SubmitEntry and the server use
+  // to store week_number. A semester-relative scheme here never matched a
+  // submitted entry, so the "not submitted yet" banner never cleared.
+  const currentWeek = getCurrentISOWeek()
   const firstName = user?.name?.split(' ')[0] || 'there'
 
   // ── Queries ────────────────────────────────────────────────────────────────

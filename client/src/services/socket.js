@@ -10,8 +10,12 @@ export function getSocket() {
         socket = io('/', {
             withCredentials: true,
             autoConnect: false,
-            reconnectionAttempts: 5,
+            // Reconnect indefinitely (with capped backoff). A finite attempt count
+            // permanently kills realtime after a brief server restart, and nothing
+            // ever re-arms it for the rest of the SPA session.
+            reconnectionAttempts: Infinity,
             reconnectionDelay: 2000,
+            reconnectionDelayMax: 30000,
             timeout: 8000,
             transports: ['websocket', 'polling'],
         })

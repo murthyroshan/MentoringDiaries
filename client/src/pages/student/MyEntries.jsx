@@ -495,11 +495,16 @@ export default function MyEntries() {
 
   const reviewedCount = useMemo(() => allEntries.filter(e => e.mentor_response).length, [allEntries])
 
-  // Missed weeks
+  // Missed weeks: gaps in the student's actual submission history (from their
+  // first submitted week up to the current week), not every calendar week since
+  // week 1 — that listed dozens of phantom weeks pre-dating their first entry.
   const missedWeeks = useMemo(() => {
-    const submittedSet = new Set(allEntries.map(e => e.week_number))
+    const weeks = allEntries.map(e => e.week_number).filter(Boolean)
+    if (!weeks.length) return []
+    const startWeek = Math.min(...weeks)
+    const submittedSet = new Set(weeks)
     const missed = []
-    for (let w = 1; w <= currentWeek; w++) {
+    for (let w = startWeek; w <= currentWeek; w++) {
       if (!submittedSet.has(w)) missed.push(w)
     }
     return missed

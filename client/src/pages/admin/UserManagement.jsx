@@ -224,7 +224,10 @@ export default function UserManagement() {
 
   const params = useMemo(() => {
     const p = { page, limit: LIMIT }
-    if (roleFilter !== 'All') p.role = roleFilter.toLowerCase()
+    // The pills are plural ('Students'); the API expects the singular role enum
+    // ('student') and 400s on anything else.
+    const ROLE_PARAM = { Students: 'student', Mentors: 'mentor', Admins: 'admin' }
+    if (roleFilter !== 'All') p.role = ROLE_PARAM[roleFilter] || roleFilter.toLowerCase()
     if (deptFilter !== 'All') p.department = deptFilter
     if (search) p.search = search
     return p

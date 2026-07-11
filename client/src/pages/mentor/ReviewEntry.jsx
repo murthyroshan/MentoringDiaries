@@ -126,7 +126,9 @@ export default function ReviewEntry() {
   // ── Ctrl+Enter shortcut ───────────────────────────────────────────────────
   useEffect(() => {
     function handler(e) {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && response.trim() && !submitted) {
+      // Guard on isPending as well as submitted, otherwise key auto-repeat or a
+      // second keypress during the in-flight request fires duplicate PATCHes.
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && response.trim() && !submitted && !submitMut.isPending) {
         submitMut.mutate({ response })
       }
     }

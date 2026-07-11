@@ -3,6 +3,15 @@ import { persist } from 'zustand/middleware'
 import api from '../services/api'
 import { connectSocket, disconnectSocket } from '../services/socket'
 import { useNotificationStore } from './notificationStore'
+import { queryClient } from '../services/queryClient'
+
+// Query keys are user-agnostic, so any cached data from a previous user must be
+// wiped whenever the identity changes — otherwise the next user on the same tab
+// is served the previous user's cached diary/attendance/notification data.
+const resetUserScopedState = () => {
+    queryClient.clear()
+    useNotificationStore.getState().clearNotifications()
+}
 
 // Router navigate ref — registered by a component inside <BrowserRouter> so the
 // store can perform SPA navigation without triggering a full page reload.
@@ -42,20 +51,27 @@ export const useAuthStore = create(
                     connectSocket(user.id || user._id, user.role)
                     return user
                 } catch {
+                    resetUserScopedState()
                     set({ user: null, isAuthenticated: false, hasCheckedAuth: true })
                     return null
                 }
             },
 
             login: (user) => {
-                set({ user, isAuthenticated: true })
+                // Wipe any cache/notifications left over from a previous user on
+                // this tab before adopting the new identity.
+                resetUserScopedState()
+                // The login response carries the full, authoritative user object,
+                // so this session is already verified — mark hasCheckedAuth so
+                // route guards don't hold it behind the restore loader.
+                set({ user, isAuthenticated: true, hasCheckedAuth: true })
                 connectSocket(user.id || user._id, user.role)
             },
 
             logout: async () => {
                 try { await api.post('/auth/logout') } catch { }
                 disconnectSocket()
-                useNotificationStore.getState().clearNotifications()
+                resetUserScopedState()
                 set({ user: null, isAuthenticated: false, hasCheckedAuth: false })
                 if (window.location.pathname !== '/login') {
                     if (_navigate) {

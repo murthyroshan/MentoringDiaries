@@ -336,20 +336,20 @@ export default function StudentLayout() {
     if (!socket) return
     const handler = (data) => {
       stableAdd(data)
-      queryClient.invalidateQueries({ queryKey: ['my-entries'] })
-      queryClient.invalidateQueries({ queryKey: ['timeline-entries'] })
-      queryClient.invalidateQueries({ queryKey: ['student-overview'] })
+      // Invalidate by the real key prefixes the student pages actually use
+      // (['diary',...], ['portfolio',...], ['insights',...]) so a mentor response
+      // refreshes live instead of showing stale data for up to staleTime.
+      queryClient.invalidateQueries({ queryKey: ['diary'] })
       queryClient.invalidateQueries({ queryKey: ['portfolio'] })
-      queryClient.invalidateQueries({ queryKey: ['notifications'] })
+      queryClient.invalidateQueries({ queryKey: ['insights'] })
     }
     socket.on('entry:responded', handler)
     const sessionHandler = () => {
-      queryClient.invalidateQueries({ queryKey: ['student-sessions'] })
-      queryClient.invalidateQueries({ queryKey: ['student-sessions-dashboard'] })
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
     }
     socket.on('session:update', sessionHandler)
     const notifHandler = (data) => stableAdd(data)
-    const notifEvents = ['entry:critical', 'system:announcement', 'entry:submitted']
+    const notifEvents = ['entry:critical', 'system:announcement', 'entry:submitted', 'mentor:reminder']
     notifEvents.forEach(ev => socket.on(ev, notifHandler))
     return () => {
       socket.off('entry:responded', handler)

@@ -19,6 +19,12 @@ api.interceptors.request.use((config) => {
     if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
         config.headers['X-CSRF-Token'] = getCsrfToken()
     }
+    // File uploads (multipart) can carry attachments up to 5 MB and easily exceed
+    // the default 15 s timeout on a slow connection. Give them a generous window
+    // so a valid submission is never aborted client-side.
+    if (typeof FormData !== 'undefined' && config.data instanceof FormData) {
+        config.timeout = 120000
+    }
     return config
 })
 

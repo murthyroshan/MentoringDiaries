@@ -2,6 +2,19 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import api from '../services/api'
 
+// Persisted notification rows carry only `type` and `message` (no title column),
+// so derive a human-readable title from the event type for display.
+const TITLE_BY_TYPE = {
+    'entry:submitted': 'New Diary Entry',
+    'entry:responded': 'Mentor Response',
+    'entry:critical': 'Risk Alert',
+    'mentor:reminder': 'Diary Reminder',
+    'admin:flag': 'Students Flagged',
+    'session:update': 'Session Update',
+    'system:announcement': 'Announcement',
+}
+const titleFromType = (t) => TITLE_BY_TYPE[t] || 'Notification'
+
 export const useNotificationStore = create(
     persist(
         (set, get) => ({
@@ -17,11 +30,11 @@ export const useNotificationStore = create(
                         notifications: items.map((n) => ({
                             id: n._id || n.id,
                             type: n.type,
-                            title: n.title,
+                            title: n.title || titleFromType(n.type),
                             message: n.message,
                             metadata: n.metadata || {},
-                            read: !!n.read,
-                            at: n.createdAt || n.timestamp || new Date().toISOString(),
+                            read: !!(n.is_read ?? n.read),
+                            at: n.created_at || n.createdAt || n.timestamp || new Date().toISOString(),
                         })),
                         unreadCount: res.data?.unreadCount || 0,
                         initialized: true,

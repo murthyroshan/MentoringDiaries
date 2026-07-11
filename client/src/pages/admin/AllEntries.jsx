@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { motion, useReducedMotion } from 'framer-motion'
@@ -104,11 +104,14 @@ export default function AllEntries() {
     const p = { page, limit: LIMIT }
     if (statusFilter) p.status = statusFilter
     if (search) p.search = search
-    // Using riskLevel via client-side filtering if backend doesn't support it,
-    // but we can pass it to the backend too.
     if (riskFilter) p.riskLevel = riskFilter
     return p
   }, [page, statusFilter, search, riskFilter])
+
+  // Filtering is applied server-side (across the whole dataset, not just the
+  // current page), so reset to page 1 whenever a filter changes — otherwise a
+  // stale high page number would sit past the end of the filtered result set.
+  useEffect(() => { setPage(1) }, [search, riskFilter, statusFilter])
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['admin-entries', params],
@@ -116,25 +119,11 @@ export default function AllEntries() {
     staleTime: 30_000, retry: 1, keepPreviousData: true,
   })
 
-  const rawEntries = data?.data || []
+  // The server already filtered by search/risk/status across all pages, so use
+  // its result directly — re-filtering client-side would drop valid matches it
+  // found by email/reflection.
+  const entries = data?.data || []
   const pagination = data?.pagination || { total: 0, pages: 1, page: 1 }
-
-  // Fallback client-side filters in case the backend ignores these params, so the
-  // risk pills and search box actually filter the fetched entries.
-  const entries = useMemo(() => {
-    let list = rawEntries
-    if (riskFilter) {
-      list = list.filter(e => (e.ai_risk_level || riskLevelFromScore(e.ai_risk_score)) === riskFilter)
-    }
-    if (search) {
-      const q = search.toLowerCase()
-      list = list.filter(e =>
-        (e.student?.name || '').toLowerCase().includes(q) ||
-        String(e.student?.roll_number ?? '').toLowerCase().includes(q)
-      )
-    }
-    return list
-  }, [rawEntries, riskFilter, search])
 
   const thStyle = { padding: '8px 12px', textAlign: 'left', fontSize: '10px', color: C.muted, fontWeight: 600, letterSpacing: '0.05em', textTransform: 'uppercase', borderBottom: `1px solid ${C.border}`, background: 'none', border: 'none' }
 
