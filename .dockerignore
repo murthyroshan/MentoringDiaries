@@ -4,3 +4,9 @@
 **/uploads
 server/tests
 client/dist
+# Never bake the local SQLite database (seeded users, password hashes, tokens)
+# into the image — it ships a known admin account and real data.
+server/data
+**/*.db
+**/*.db-wal
+**/*.db-shm

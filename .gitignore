@@ -16,6 +16,15 @@ server/node_modules/
 client/dist/
 server/public/
 
+# SQLite database (contains user data, password hashes, tokens) and uploads —
+# never commit these.
+*.db
+*.db-wal
+*.db-shm
+server/data/
+server/uploads/
+uploads/
+
 # Logs
 *.log
 logs/

@@ -8,9 +8,14 @@ module.exports = {
         {
             name:          'mentoring-diaries',
             script:        'index.js',
-            // One process per CPU core for maximum throughput.
-            instances:     'max',
-            exec_mode:     'cluster',
+            // Single instance (fork mode). Socket.IO uses in-memory rooms with no
+            // cluster adapter and PM2 cluster provides no sticky sessions, so
+            // multiple workers would silently drop realtime notifications for any
+            // client whose socket lives on a different worker than the emitter.
+            // To scale horizontally, add @socket.io/cluster-adapter + sticky
+            // sessions (or a Redis adapter) before raising this above 1.
+            instances:     1,
+            exec_mode:     'fork',
             // Restart automatically if the process exceeds 512 MB RSS.
             max_memory_restart: '512M',
             // Restart up to 10 times within 30 s before PM2 gives up.
